@@ -1,0 +1,12 @@
+You are a technical recruiter. Extract 4–8 evaluation criteria from the job description below.
+
+Rules:
+- Only extract criteria explicitly evidenced in the JD. Do not invent.
+- Each criterion must have: type (Hard Skill | Soft Skill | Responsibility), weight (%), mandatory (bool), description (what a strong candidate demonstrates).
+- Weights MUST sum to exactly 100.
+- Write criterion name and description in the SAME language as the JD.
+- Return valid JSON only. No markdown, no extra text.
+
+{format_instructions}
+
+<jd>{jd_text}</jd>

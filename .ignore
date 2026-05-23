@@ -1,0 +1,77 @@
+# =========================================================================
+# Project Search & Indexing Ignore Rules (.ignore)
+# =========================================================================
+# This file directs search/indexing tools (like ripgrep, search engines, and AI agents)
+# on what files/directories to skip to keep processing fast and clean.
+
+# =========================================================================
+# 🚫 SECTION 1: DO NOT NEED / IGNORED (Skip from indexing and search)
+# =========================================================================
+
+# --- Runtime Environments ---
+.venv/
+venv/
+env/
+ENV/
+
+# --- Python Compiled Cache ---
+**/__pycache__/
+**/*.py[cod]
+**/*$py.class
+.pytest_cache/
+.coverage
+htmlcov/
+
+# --- Database & Local Session States ---
+*.db
+*.sqlite
+*.sqlite3
+*.sql
+db.sqlite3
+data/
+**/*.local
+
+# --- Media Uploads & Assets (Heavy Binary Files) ---
+# Highly recommended to ignore locally uploaded resumes and recordings from search
+**/uploads/
+**/audio_uploads/
+temp/
+tmp/
+*.mp3
+*.wav
+*.mp4
+*.webm
+*.m4a
+*.pdf
+*.docx
+
+# --- IDEs & Local Settings ---
+.vscode/
+.idea/
+*.suo
+*.njsproj
+*.sln
+*.swp
+.DS_Store
+Thumbs.db
+
+# --- Logs & Performance Traces ---
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+
+# =========================================================================
+# ✅ SECTION 2: CRITICAL FILES & DIRECTORIES TO KEEP (Indexed & Tracked)
+# =========================================================================
+# The following directories contain the actual application source code and must 
+# always be active and searched:
+#
+# - /frontend-v2/           -> HTML, CSS, JS Frontend source files.
+# - /interview-platform/    -> FastAPI Backend, DB schemas, celery tasks, core configs.
+# - requirements.txt        -> Python dependencies list.
+# - run.py                  -> Main launcher entry point.
+# - .env                    -> Local environment secrets template (keep structure, ignore values).
+# =========================================================================
