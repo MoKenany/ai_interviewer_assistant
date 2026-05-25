@@ -81,9 +81,14 @@ export class JobVersionsSection {
         return `
             <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:1.5rem;flex-wrap:wrap;gap:1rem;">
                 <div>
-                    <button class="btn btn-outline" onclick="window.location.hash='/jobs'" style="margin-bottom:0.5rem;font-size:0.85rem;">
-                        <i class="fas fa-arrow-left"></i> Back to Jobs
-                    </button>
+                    <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:0.5rem;">
+                        <button class="btn btn-outline" onclick="window.location.hash='/jobs'" style="font-size:0.85rem;">
+                            <i class="fas fa-arrow-left"></i> Back to Jobs
+                        </button>
+                        <button class="btn btn-outline" onclick="window.location.hash='/candidates?jobId=${this.jobId}'" style="font-size:0.85rem;">
+                            <i class="fas fa-users"></i> View All Candidates
+                        </button>
+                    </div>
                     <h1 style="color:var(--primary-color);">Job Versions</h1>
                     <p style="color:var(--text-muted);">${jobTitle}</p>
                 </div>
@@ -113,19 +118,17 @@ export class JobVersionsSection {
         const content = `
             <div class="form-group">
                 <label class="form-label">Criteria Mode</label>
-                <select id="ver-mode" class="form-control">
-                    <option value="manual">Manual – I will add criteria myself</option>
-                    <option value="ai">AI Generated – AI suggests criteria from JD</option>
-                    <option value="hybrid">Hybrid – AI suggests, I refine</option>
-                </select>
+                <div class="form-control" style="background:var(--bg-secondary);color:var(--text-main);">
+                    Hybrid – AI suggests, I refine
+                </div>
+                <input type="hidden" id="ver-mode" value="hybrid">
             </div>
             <div style="background:var(--bg-color);border-radius:var(--radius-md);padding:1rem;margin-top:0.5rem;font-size:0.9rem;color:var(--text-muted);">
                 <i class="fas fa-info-circle" style="color:var(--info);"></i>
                 After creating the version, you'll be taken directly to the <strong>Version Detail</strong> page where you can:
                 <ul style="margin:0.5rem 0 0 1rem;line-height:1.8;">
                     <li>Add / edit the full Job Description text</li>
-                    <li>View AI-suggested evaluation criteria</li>
-                    <li>Add, edit, and delete criteria manually</li>
+                    <li>View AI-suggested evaluation criteria and refine them</li>
                     <li>Navigate to Applications for this version</li>
                 </ul>
             </div>

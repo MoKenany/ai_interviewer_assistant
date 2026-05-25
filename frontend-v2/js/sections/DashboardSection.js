@@ -97,15 +97,15 @@ export class DashboardSection {
         return `
             <style>
                 :root {
-                    --bg: #f8fafc;
-                    --card: #ffffff;
-                    --border: rgba(148,163,184,0.16);
-                    --text: #0f172a;
-                    --muted: #64748b;
-                    --success: #16a34a;
-                    --warning: #f59e0b;
-                    --danger: #ef4444;
-                    --primary: #4f46e5;
+                    --bg: var(--background-body);
+                    --card: var(--surface-color);
+                    --border: var(--border-color);
+                    --text: var(--text-main);
+                    --muted: var(--text-muted);
+                    --success: var(--success);
+                    --warning: var(--warning);
+                    --danger: var(--danger);
+                    --primary: var(--primary-color);
                 }
                 .dashboard-shell {
                     padding: 1.5rem 1.25rem 2rem;
@@ -149,7 +149,7 @@ export class DashboardSection {
                     padding: 0 0.9rem;
                     font-size: 0.95rem;
                     color: var(--text);
-                    background: #ffffff;
+                    background: var(--input-bg);
                     transition: border-color 0.2s ease, box-shadow 0.2s ease;
                 }
                 .dashboard-filters select:focus,
@@ -558,11 +558,19 @@ export class DashboardSection {
             return;
         }
 
+        const computedStyle = getComputedStyle(document.documentElement);
+        const chartTextColor = computedStyle.getPropertyValue('--text-main').trim() || '#111827';
+        const chartMutedColor = computedStyle.getPropertyValue('--text-muted').trim() || '#94a3b8';
+        const chartSurfaceColor = computedStyle.getPropertyValue('--surface-color').trim() || '#0f172a';
+
         Chart.defaults.font.family = getLang() === 'ar' ? "'Cairo', sans-serif" : "'Inter', sans-serif";
-        Chart.defaults.color = 'var(--muted)';
+        Chart.defaults.color = chartTextColor;
+        Chart.defaults.plugins.tooltip.bodyColor = chartTextColor;
+        Chart.defaults.plugins.tooltip.titleColor = chartTextColor;
+        Chart.defaults.plugins.tooltip.backgroundColor = chartSurfaceColor;
         Chart.defaults.plugins.tooltip.padding = 12;
         Chart.defaults.plugins.tooltip.cornerRadius = 8;
-        Chart.defaults.plugins.tooltip.backgroundColor = '#0f172a';
+        this.chartColors = { text: chartTextColor, muted: chartMutedColor, border: computedStyle.getPropertyValue('--border-color').trim() || 'rgba(148,163,184,0.18)' };
 
         this.renderPipelineFunnelChart();
         this.renderRecommendationChart();
@@ -647,8 +655,8 @@ export class DashboardSection {
                     }
                 },
                 scales: {
-                    x: { grid: { display: false }, ticks: { color: 'var(--muted)' } },
-                    y: { beginAtZero: true, grid: { color: 'rgba(148,163,184,0.18)' }, ticks: { precision: 0, color: 'var(--muted)' } }
+                    x: { grid: { display: false }, ticks: { color: this.chartColors.muted } },
+                    y: { beginAtZero: true, grid: { color: this.chartColors.border }, ticks: { precision: 0, color: this.chartColors.muted } }
                 }
             }
         });
@@ -693,8 +701,8 @@ export class DashboardSection {
                     legend: { display: false }
                 },
                 scales: {
-                    x: { beginAtZero: true, grid: { color: 'rgba(148,163,184,0.18)' }, ticks: { precision: 0, color: 'var(--muted)' } },
-                    y: { grid: { display: false }, ticks: { color: 'var(--text)' } }
+                    x: { beginAtZero: true, grid: { color: this.chartColors.border }, ticks: { precision: 0, color: this.chartColors.muted } },
+                    y: { grid: { display: false }, ticks: { color: this.chartColors.text } }
                 }
             }
         });
@@ -730,8 +738,8 @@ export class DashboardSection {
                 responsive: true,
                 maintainAspectRatio: false,
                 scales: {
-                    x: { title: { display: true, text: getLang() === 'ar' ? 'درجة التقييم (%)' : 'Overall Score (%)', font: { weight: '700' } }, min: 0, max: 100, grid: { color: 'rgba(148,163,184,0.18)' }, ticks: { color: 'var(--muted)' } },
-                    y: { title: { display: true, text: getLang() === 'ar' ? 'ثقة الذكاء الاصطناعي (%)' : 'AI Confidence (%)', font: { weight: '700' } }, min: 0, max: 100, grid: { color: 'rgba(148,163,184,0.18)' }, ticks: { color: 'var(--muted)' } }
+                    x: { title: { display: true, text: getLang() === 'ar' ? 'درجة التقييم (%)' : 'Overall Score (%)', font: { weight: '700' } }, min: 0, max: 100, grid: { color: this.chartColors.border }, ticks: { color: this.chartColors.muted } },
+                    y: { title: { display: true, text: getLang() === 'ar' ? 'ثقة الذكاء الاصطناعي (%)' : 'AI Confidence (%)', font: { weight: '700' } }, min: 0, max: 100, grid: { color: this.chartColors.border }, ticks: { color: this.chartColors.muted } }
                 },
                 plugins: {
                     tooltip: {
@@ -770,7 +778,7 @@ export class DashboardSection {
                 maintainAspectRatio: false,
                 cutout: '72%',
                 plugins: {
-                    legend: { position: getLang() === 'ar' ? 'left' : 'right', labels: { usePointStyle: true, boxWidth: 10, color: 'var(--muted)' } }
+                    legend: { position: getLang() === 'ar' ? 'left' : 'right', labels: { usePointStyle: true, boxWidth: 10, color: this.chartColors.muted } }
                 }
             }
         });
@@ -798,7 +806,7 @@ export class DashboardSection {
                 responsive: true,
                 maintainAspectRatio: false,
                 cutout: '60%',
-                plugins: { legend: { position: 'bottom', labels: { usePointStyle: true, boxWidth: 10, color: 'var(--muted)' } } }
+                plugins: { legend: { position: 'bottom', labels: { usePointStyle: true, boxWidth: 10, color: this.chartColors.muted } } }
             }
         });
         this.charts.push(chart);
@@ -827,7 +835,7 @@ export class DashboardSection {
                 responsive: true,
                 maintainAspectRatio: false,
                 plugins: { legend: { display: false } },
-                scales: { x: { grid: { display: false }, ticks: { color: 'var(--muted)' } }, y: { beginAtZero: true, grid: { color: 'rgba(148,163,184,0.18)' }, ticks: { precision: 0, color: 'var(--muted)' } } }
+                scales: { x: { grid: { display: false }, ticks: { color: this.chartColors.muted } }, y: { beginAtZero: true, grid: { color: this.chartColors.border }, ticks: { precision: 0, color: this.chartColors.muted } } }
             }
         });
         this.charts.push(chart);
@@ -857,7 +865,7 @@ export class DashboardSection {
                 responsive: true,
                 maintainAspectRatio: false,
                 plugins: { legend: { display: false } },
-                scales: { x: { grid: { display: false }, ticks: { color: 'var(--muted)' } }, y: { beginAtZero: true, grid: { color: 'rgba(148,163,184,0.18)' }, ticks: { precision: 0, color: 'var(--muted)' } } }
+                scales: { x: { grid: { display: false }, ticks: { color: this.chartColors.muted } }, y: { beginAtZero: true, grid: { color: this.chartColors.border }, ticks: { precision: 0, color: this.chartColors.muted } } }
             }
         });
         this.charts.push(chart);
@@ -883,7 +891,7 @@ export class DashboardSection {
                 responsive: true,
                 maintainAspectRatio: false,
                 cutout: '68%',
-                plugins: { legend: { position: 'bottom', labels: { usePointStyle: true, boxWidth: 10, color: 'var(--muted)' } } }
+                plugins: { legend: { position: 'bottom', labels: { usePointStyle: true, boxWidth: 10, color: this.chartColors.muted } } }
             }
         });
         this.charts.push(chart);
@@ -910,7 +918,7 @@ export class DashboardSection {
                 responsive: true,
                 maintainAspectRatio: false,
                 plugins: { legend: { display: false } },
-                scales: { x: { grid: { display: false }, ticks: { color: 'var(--muted)' } }, y: { beginAtZero: true, grid: { color: 'rgba(148,163,184,0.18)' }, ticks: { precision: 0, color: 'var(--muted)' } } }
+                scales: { x: { grid: { display: false }, ticks: { color: this.chartColors.muted } }, y: { beginAtZero: true, grid: { color: this.chartColors.border }, ticks: { precision: 0, color: this.chartColors.muted } } }
             }
         });
         this.charts.push(chart);
@@ -944,7 +952,7 @@ export class DashboardSection {
                 responsive: true,
                 maintainAspectRatio: false,
                 plugins: { legend: { display: false } },
-                scales: { x: { beginAtZero: true, grid: { color: 'rgba(148,163,184,0.18)' }, ticks: { precision: 0, color: 'var(--muted)' } }, y: { grid: { display: false }, ticks: { color: 'var(--text)' } } }
+                scales: { x: { beginAtZero: true, grid: { color: this.chartColors.border }, ticks: { precision: 0, color: this.chartColors.muted } }, y: { grid: { display: false }, ticks: { color: this.chartColors.text } } }
             }
         });
         this.charts.push(chart);

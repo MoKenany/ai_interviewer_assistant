@@ -94,7 +94,7 @@ export class JobVersionDetailSection {
                         </div>
                         <p style="color:var(--text-muted);font-size:0.9rem;margin-bottom:0.4rem;">${c.description || (isAr ? 'لا يوجد وصف.' : 'No description.')}</p>
                         <div style="font-size:0.85rem;color:var(--text-muted);">
-                            ${isAr?'الوزن':'Weight'}: <strong style="color:var(--primary-color);">${c.weight}/10</strong>
+                            ${isAr?'الوزن':'Weight'}: <strong style="color:var(--primary-color);">${Number(c.weight.toFixed(1))}%</strong>
                         </div>
                     </div>
                     <div style="display:flex;gap:0.4rem;align-items:center;">
@@ -124,6 +124,8 @@ export class JobVersionDetailSection {
         const modeLabels = isAr 
             ? { manual: 'يدوي', ai: 'مستخرج بالذكاء الاصطناعي', hybrid: 'هجين' }
             : { manual: 'Manual', ai: 'AI Generated', hybrid: 'Hybrid' };
+        const totalCriteriaWeight = (v.criteria || []).reduce((sum, c) => sum + (c.weight || 0), 0);
+        const totalWeightDisplay = Number(totalCriteriaWeight.toFixed(1));
 
         // Generate Candidates Rows
         let tableRows = '';
@@ -214,6 +216,9 @@ ${v.raw_jd_text || `<em style="color:var(--text-muted);">${isAr ? 'لا يوجد
                             <i class="fas fa-list-check"></i> ${isAr ? 'معايير التقييم' : 'Evaluation Criteria'}
                             <span style="background:var(--primary-color);color:white;border-radius:20px;padding:0.1rem 0.5rem;font-size:0.8rem;margin-left:0.4rem;">
                                 ${v.criteria ? v.criteria.length : 0}
+                            </span>
+                            <span style="background:var(--secondary-color);color:white;border-radius:20px;padding:0.1rem 0.5rem;font-size:0.8rem;margin-left:0.4rem;">
+                                ${isAr ? 'الإجمالي' : 'Total'}: ${totalWeightDisplay}%
                             </span>
                         </h2>
                         <div style="display:flex;gap:0.5rem;">
@@ -385,17 +390,10 @@ ${v.raw_jd_text || `<em style="color:var(--text-muted);">${isAr ? 'لا يوجد
         const content = `
             <div class="form-group">
                 <label class="form-label">${isAr ? 'وضع تحديد المعايير' : 'Criteria Mode'}</label>
-                <select id="edit-ver-mode" class="form-control">
-                    <option value="manual" ${this.version.criteria_mode==='manual'?'selected':''}>
-                        ${isAr ? 'يدوي – سأقوم بإضافة المعايير بنفسي' : 'Manual – I add criteria myself'}
-                    </option>
-                    <option value="ai" ${this.version.criteria_mode==='ai'?'selected':''}>
-                        ${isAr ? 'توليد بالذكاء الاصطناعي – يقترح النظام المعايير تلقائياً' : 'AI Generated – AI suggests from JD'}
-                    </option>
-                    <option value="hybrid" ${this.version.criteria_mode==='hybrid'?'selected':''}>
-                        ${isAr ? 'هجين – يقترح النظام وأستطيع التعديل' : 'Hybrid – AI suggests, I refine'}
-                    </option>
-                </select>
+                <div class="form-control" style="background:var(--bg-secondary);color:var(--text-main);">
+                    ${isAr ? 'هجين – يقترح النظام وأستطيع التعديل' : 'Hybrid – AI suggests, I refine'}
+                </div>
+                <input type="hidden" id="edit-ver-mode" value="hybrid">
             </div>
             <div class="form-group">
                 <label class="form-label">${isAr ? 'نص الوصف الوظيفي' : 'Job Description Text'}</label>
@@ -625,9 +623,9 @@ ${v.raw_jd_text || `<em style="color:var(--text-muted);">${isAr ? 'لا يوجد
             </div>
             <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;">
                 <div class="form-group">
-                    <label class="form-label">${isAr ? 'الوزن (1-10)' : 'Weight (1-10)'} <span style="color:var(--danger);">*</span></label>
+                    <label class="form-label">${isAr ? 'الوزن (%)' : 'Weight (%)'} <span style="color:var(--danger);">*</span></label>
                     <input type="number" id="crit-weight" class="form-control" 
-                        value="${isEdit ? existing.weight : 5}" min="1" max="10" step="0.5">
+                        value="${isEdit ? existing.weight : 10}" min="1" max="100" step="0.5">
                 </div>
                 <div class="form-group">
                     <label class="form-label">${isAr ? 'مستوى الأهمية' : 'Priority Level'}</label>
@@ -652,13 +650,25 @@ ${v.raw_jd_text || `<em style="color:var(--text-muted);">${isAr ? 'لا يوجد
             onSave: async (modalEl) => {
                 const name = modalEl.querySelector('#crit-name').value.trim();
                 if (!name) { Toast.show(isAr ? 'اسم المعيار مطلوب.' : 'Criteria name is required', 'error'); throw new Error(); }
+                const weightValue = parseFloat(modalEl.querySelector('#crit-weight').value) || 0;
                 const payload = {
                     name,
                     description: modalEl.querySelector('#crit-desc').value || null,
-                    weight: parseFloat(modalEl.querySelector('#crit-weight').value) || 5,
+                    weight: weightValue,
                     priority_level: modalEl.querySelector('#crit-priority').value,
                     is_mandatory: modalEl.querySelector('#crit-mandatory').checked
                 };
+
+                const currentTotal = (this.version?.criteria || []).reduce((sum, c) => sum + (c.weight || 0), 0);
+                const existingWeight = isEdit ? (existing.weight || 0) : 0;
+                if (weightValue <= 0 || weightValue > 100) {
+                    Toast.show(isAr ? 'يجب أن يكون الوزن بين 1 و 100.' : 'Weight must be between 1 and 100.', 'error');
+                    throw new Error();
+                }
+                if (currentTotal - existingWeight + weightValue > 100) {
+                    Toast.show(isAr ? 'الإجمالي لا يجب أن يتجاوز 100%.' : 'Total criteria weight cannot exceed 100%.', 'error');
+                    throw new Error();
+                }
                 try {
                     if (isEdit) {
                         await api.fetch(`/jobs/${this.jobId}/versions/${this.versionId}/criteria/${existing.id}`, { method: 'DELETE' });

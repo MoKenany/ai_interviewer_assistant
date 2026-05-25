@@ -3,7 +3,7 @@ from sqlalchemy.future import select
 from app.models.job_application import JobApplication
 from app.schemas.application import ApplicationCreate, ApplicationUpdateStatus, ApplicationUpdate
 from typing import List, Optional
-
+from sqlalchemy import select, delete
 class ApplicationRepo:
     @staticmethod
     async def get_all(db: AsyncSession, candidate_id: Optional[int] = None, job_version_id: Optional[int] = None) -> List[JobApplication]:

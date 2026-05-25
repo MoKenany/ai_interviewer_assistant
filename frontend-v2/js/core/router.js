@@ -39,10 +39,9 @@ export class Router {
     }
 
     static async handleRoute() {
-        let path = window.location.hash.replace('#', '') || '/';
-        
-        // Remove query strings if any
-        path = path.split('?')[0];
+        const rawHash = window.location.hash.replace('#', '') || '/';
+        const [pathname, queryString] = rawHash.split('?');
+        const path = pathname || '/';
 
         // AUTH GUARD
         const token = localStorage.getItem('access_token');
@@ -84,8 +83,14 @@ export class Router {
         appContent.innerHTML = ''; 
 
         try {
-            // Pass match.groups to the constructor if any
-            const params = match && match.groups ? match.groups : {};
+            // Pass route params and query params to the constructor if any
+            const params = match && match.groups ? { ...match.groups } : {};
+            if (queryString) {
+                const searchParams = new URLSearchParams(queryString);
+                for (const [key, value] of searchParams.entries()) {
+                    params[key] = value;
+                }
+            }
             const view = new ViewClass(params);
             this.currentView = view;
             await view.fetchData();

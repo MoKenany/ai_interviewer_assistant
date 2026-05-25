@@ -49,6 +49,7 @@ class InsightWeakness(BaseModel):
 class InterviewerNotes(BaseModel):
     communication_style: str
     confidence_level: str
+    confidence_explanation: str
     seniority_signals: str
     red_flags: str
 
@@ -177,15 +178,15 @@ class LlamaClient:
 
     @staticmethod
     @retry(wait=wait_exponential(multiplier=1, min=5, max=15), stop=stop_after_attempt(3))
-    async def run_scoring(qa_pairs: list, criteria: list, jd_text: str) -> ScoringResult:
+    async def run_scoring(qa_pairs: list, criteria: list, jd_text: str, ai_mode: str = "normal") -> ScoringResult:
         model = get_llama_model()
         parser = PydanticOutputParser(pydantic_object=ScoringResult)
         prompt_path = os.path.join(os.getcwd(), "prompts", "scoring", "v2.txt")
         with open(prompt_path, "r") as f:
             template_str = f.read()
-        prompt = PromptTemplate(template=template_str, input_variables=["qa_pairs", "criteria", "jd_text"], partial_variables={"format_instructions": parser.get_format_instructions()})
+        prompt = PromptTemplate(template=template_str, input_variables=["qa_pairs", "criteria", "jd_text", "mode"], partial_variables={"format_instructions": parser.get_format_instructions()})
         
-        formatted_prompt = await prompt.ainvoke({"qa_pairs": str(qa_pairs), "criteria": str(criteria), "jd_text": jd_text})
+        formatted_prompt = await prompt.ainvoke({"qa_pairs": str(qa_pairs), "criteria": str(criteria), "jd_text": jd_text, "mode": ai_mode})
         response = await _rate_limited_ainvoke(model, formatted_prompt)
         
         tokens = extract_tokens(response)
@@ -196,15 +197,15 @@ class LlamaClient:
 
     @staticmethod
     @retry(wait=wait_exponential(multiplier=1, min=5, max=15), stop=stop_after_attempt(3))
-    async def run_insight_generation(scoring: ScoringResult, qa_pairs: list, criteria: list) -> InsightReport:
+    async def run_insight_generation(scoring: ScoringResult, qa_pairs: list, criteria: list, ai_mode: str = "normal") -> InsightReport:
         model = get_llama_model()
         parser = PydanticOutputParser(pydantic_object=InsightReport)
         prompt_path = os.path.join(os.getcwd(), "prompts", "insight_generation", "v2.txt")
         with open(prompt_path, "r") as f:
             template_str = f.read()
-        prompt = PromptTemplate(template=template_str, input_variables=["scoring", "qa_pairs", "criteria"], partial_variables={"format_instructions": parser.get_format_instructions()})
+        prompt = PromptTemplate(template=template_str, input_variables=["scoring", "qa_pairs", "criteria", "mode"], partial_variables={"format_instructions": parser.get_format_instructions()})
         
-        formatted_prompt = await prompt.ainvoke({"scoring": scoring.model_dump_json(), "qa_pairs": str(qa_pairs), "criteria": str(criteria)})
+        formatted_prompt = await prompt.ainvoke({"scoring": scoring.model_dump_json(), "qa_pairs": str(qa_pairs), "criteria": str(criteria), "mode": ai_mode})
         response = await _rate_limited_ainvoke(model, formatted_prompt)
         
         tokens = extract_tokens(response)

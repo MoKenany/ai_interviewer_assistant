@@ -105,6 +105,50 @@ class TestEvaluationCriteria:
         resp = await client.post(f"/api/v1/jobs/{job_id}/versions/{version_id}/criteria", headers=auth_headers, json=MOCK_CRITERIA[0])
         assert resp.status_code == 201
 
+    async def test_add_criteria_total_weight_exceeds_100(self, client: AsyncClient, auth_headers: dict):
+        create_job = await client.post("/api/v1/jobs", headers=auth_headers, json={
+            "title": "Weighted Crit", "department": "Ops", "location": "Remote"
+        })
+        job_id = create_job.json()["id"]
+        create_ver = await client.post(f"/api/v1/jobs/{job_id}/versions", headers=auth_headers, json={
+            "raw_jd_text": "Kubernetes and CI/CD", "trigger_jd_agent": False
+        })
+        version_id = create_ver.json()["id"]
+
+        resp1 = await client.post(f"/api/v1/jobs/{job_id}/versions/{version_id}/criteria", headers=auth_headers, json={
+            "name": "Infrastructure", "description": "Infrastructure skills", "weight": 80, "is_mandatory": True
+        })
+        assert resp1.status_code == 201
+
+        resp2 = await client.post(f"/api/v1/jobs/{job_id}/versions/{version_id}/criteria", headers=auth_headers, json={
+            "name": "Communication", "description": "Communication skills", "weight": 30, "is_mandatory": False
+        })
+        assert resp2.status_code == 400
+        assert "Total criteria weight cannot exceed 100%" in resp2.text
+
+    @patch("app.services.job_service.LlamaClient.run_jd_agent", new_callable=AsyncMock)
+    async def test_generate_criteria_normalizes_ai_weights(self, mock_jd_agent, client: AsyncClient, auth_headers: dict):
+        mock_jd_agent.return_value = [
+            type("C", (), {"name": "Python", "description": "Python skills", "weight": 80, "is_mandatory": True, "priority_level": "high"})(),
+            type("C", (), {"name": "System Design", "description": "Architecture", "weight": 80, "is_mandatory": False, "priority_level": "medium"})()
+        ]
+
+        create_job = await client.post("/api/v1/jobs", headers=auth_headers, json={
+            "title": "AI Norm", "department": "AI", "location": "Remote"
+        })
+        job_id = create_job.json()["id"]
+        create_ver = await client.post(f"/api/v1/jobs/{job_id}/versions", headers=auth_headers, json={
+            "raw_jd_text": "Build a machine learning platform.", "trigger_jd_agent": False
+        })
+        version_id = create_ver.json()["id"]
+
+        resp = await client.post(f"/api/v1/jobs/{job_id}/versions/{version_id}/generate-criteria", headers=auth_headers)
+        assert resp.status_code == 200
+        criteria = resp.json().get("criteria", [])
+        weights = [c["weight"] for c in criteria]
+        assert round(sum(weights), 2) == 100.0
+        assert weights == [50.0, 50.0]
+
     async def test_list_versions(self, client: AsyncClient, auth_headers: dict):
         create_job = await client.post("/api/v1/jobs", headers=auth_headers, json={
             "title": "Ver Test", "department": "V", "location": "Remote"

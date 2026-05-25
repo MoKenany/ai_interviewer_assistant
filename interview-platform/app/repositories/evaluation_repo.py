@@ -17,7 +17,11 @@ class EvaluationRepo:
     async def update_notes(db: AsyncSession, eval_id: int, notes: dict) -> InterviewEvaluation | None:
         evaluation = await EvaluationRepo.get(db, eval_id)
         if evaluation:
-            evaluation.interviewer_notes = notes
+            existing_notes = evaluation.interviewer_notes or {}
+            if not isinstance(existing_notes, dict):
+                existing_notes = {}
+            merged_notes = {**existing_notes, **notes}
+            evaluation.interviewer_notes = merged_notes
             await db.commit()
             await db.refresh(evaluation)
         return evaluation

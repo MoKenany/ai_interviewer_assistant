@@ -10,6 +10,12 @@ class SessionTypeEnum(str, enum.Enum):
     cultural_fit = "cultural_fit"
     final = "final"
 
+class SessionAIModeEnum(str, enum.Enum):
+    very_strict = "very_strict"
+    strict = "strict"
+    normal = "normal"
+    lenient = "lenient"
+
 class PipelineStatusEnum(str, enum.Enum):
     pending = "pending"
     running = "running"
@@ -23,6 +29,7 @@ class InterviewSession(Base):
     application_id = Column(Integer, ForeignKey("job_applications.id"), nullable=False, index=True)
     session_type = Column(Enum(SessionTypeEnum), nullable=False)
     media_file_id = Column(Integer, ForeignKey("media_files.id", name="fk_session_media"), nullable=True, index=True)
+    ai_mode = Column(Enum(SessionAIModeEnum), default=SessionAIModeEnum.normal, nullable=False, server_default=SessionAIModeEnum.normal.value)
     pipeline_status = Column(Enum(PipelineStatusEnum), default=PipelineStatusEnum.pending, index=True)
     full_transcript = Column(Text, nullable=True)
     auto_delete_media = Column(Boolean, default=False, nullable=False)

@@ -71,13 +71,43 @@ async def get_dashboard_metrics(
     avg_scores_result = await db.execute(avg_scores_query)
     avg_overall_score, avg_confidence_score = avg_scores_result.one_or_none() or (0.0, 0.0)
     avg_overall_score = round(avg_overall_score or 0.0, 1)
-    avg_confidence_score = round((avg_confidence_score or 0.0) * 100, 0)
-    
+    if avg_confidence_score is None:
+        avg_confidence_score = 0.0
+    elif avg_confidence_score <= 1:
+        avg_confidence_score = round(avg_confidence_score * 100, 0)
+    else:
+        avg_confidence_score = round(avg_confidence_score, 0)
+
+    # Calculate average time to hire in days from application creation to evaluation generation.
+    time_query = select(JobApplication.created_at, InterviewEvaluation.created_at)
+    time_query = time_query.join(JobApplication, evaluation_join)
+    time_query = time_query.join(JobVersion, application_job_version_join)
+    time_query = time_query.join(Job, job_version_job_join)
+    time_query = time_query.where(
+        InterviewEvaluation.created_at.isnot(None),
+        JobApplication.created_at.isnot(None),
+        *filters
+    )
+    time_result = await db.execute(time_query)
+    time_pairs = time_result.all()
+    time_to_hire_days = None
+    if time_pairs:
+        deltas = []
+        for app_created, eval_created in time_pairs:
+            if app_created and eval_created:
+                diff_days = (eval_created - app_created).total_seconds() / 86400
+                if diff_days >= 0:
+                    deltas.append(diff_days)
+        if deltas:
+            time_to_hire_days = round(sum(deltas) / len(deltas), 1)
+
     pulse_metrics = {
         "active_sessions": active_sessions,
         "total_evaluations_saved": total_evaluations,
+        "total_candidates_analyzed": total_evaluations,
         "average_overall_score": avg_overall_score,
-        "average_confidence_score": avg_confidence_score
+        "average_confidence_score": avg_confidence_score,
+        "average_time_to_hire_days": time_to_hire_days
     }
 
     # 2. Candidate Quality Matrix

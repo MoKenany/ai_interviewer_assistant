@@ -18,7 +18,7 @@ from app.models.candidate import Candidate
 from app.models.job_version import JobVersion, CriteriaModeEnum
 from app.models.evaluation_criteria import EvaluationCriteria, PriorityLevelEnum
 from app.models.job_application import JobApplication, ApplicationStatusEnum
-from app.models.interview_session import InterviewSession, SessionTypeEnum, PipelineStatusEnum
+from app.models.interview_session import InterviewSession, SessionTypeEnum, SessionAIModeEnum, PipelineStatusEnum
 from app.models.ai_pipeline_run import AIPipelineRun
 from app.models.ai_pipeline_step import AIPipelineStep
 from app.models.interview_evaluation import InterviewEvaluation
@@ -147,9 +147,9 @@ async def seed():
 
         # 6. Create Sessions
         sessions = [
-            InterviewSession(application_id=applications[0].id, session_type=SessionTypeEnum.technical, pipeline_status=PipelineStatusEnum.pending),
-            InterviewSession(application_id=applications[3].id, session_type=SessionTypeEnum.cultural_fit, pipeline_status=PipelineStatusEnum.pending),
-            InterviewSession(application_id=applications[5].id, session_type=SessionTypeEnum.technical, pipeline_status=PipelineStatusEnum.pending),
+            InterviewSession(application_id=applications[0].id, session_type=SessionTypeEnum.technical, ai_mode=SessionAIModeEnum.strict, pipeline_status=PipelineStatusEnum.pending),
+            InterviewSession(application_id=applications[3].id, session_type=SessionTypeEnum.cultural_fit, ai_mode=SessionAIModeEnum.normal, pipeline_status=PipelineStatusEnum.pending),
+            InterviewSession(application_id=applications[5].id, session_type=SessionTypeEnum.technical, ai_mode=SessionAIModeEnum.lenient, pipeline_status=PipelineStatusEnum.pending),
         ]
         session.add_all(sessions)
         

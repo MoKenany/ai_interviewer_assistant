@@ -544,7 +544,12 @@ async def _step_scoring(
         
         # Run scoring with timeout
         scoring_res = await asyncio.wait_for(
-            LlamaClient.run_scoring(qa_pairs, criteria_list, job_version.raw_jd_text),
+            LlamaClient.run_scoring(
+                qa_pairs,
+                criteria_list,
+                job_version.raw_jd_text,
+                ai_mode=session.ai_mode.value if session.ai_mode else "normal"
+            ),
             timeout=AI_REQUEST_TIMEOUT
         )
         actual_tokens = tokens_tracker.get() or estimated
@@ -616,7 +621,12 @@ async def _step_insight_generation(
         
         # Generate insights with timeout
         insight_res = await asyncio.wait_for(
-            LlamaClient.run_insight_generation(scoring_res, qa_pairs, criteria_list),
+            LlamaClient.run_insight_generation(
+                scoring_res,
+                qa_pairs,
+                criteria_list,
+                ai_mode=session.ai_mode.value if session.ai_mode else "normal"
+            ),
             timeout=AI_REQUEST_TIMEOUT
         )
         actual_tokens = tokens_tracker.get() or estimated

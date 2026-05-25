@@ -8,7 +8,7 @@ from app.models.evaluation_criteria import PriorityLevelEnum
 class EvaluationCriteriaBase(BaseModel):
     name: str
     description: Optional[str] = None
-    weight: float
+    weight: float = Field(gt=0, le=100)
     is_mandatory: bool = False
     priority_level: PriorityLevelEnum = PriorityLevelEnum.medium
 

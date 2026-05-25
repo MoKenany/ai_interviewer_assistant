@@ -2,11 +2,28 @@ import { t, getLang } from '../core/i18n.js';
 import { api } from '../core/api.js';
 import { Modal } from '../components/Modal.js';
 import { Toast } from '../components/Toast.js';
+import { renderJobsSection } from './CandidatesJobsSection.js';
+import { renderAssignedCandidatesSection } from './AssignedCandidatesSection.js';
+import { renderUnassignedCandidatesSection } from './UnassignedCandidatesSection.js';
 
 export class CandidatesSection {
-    constructor() {
+    constructor(params = {}) {
         this.jobs = [];
         this.unassigned = [];
+        this.unassignedSearch = '';
+        this.unassignedSourceFilter = '';
+        this.unassignedActiveFilter = '';
+        this.unassignedDisplayLimit = 20;
+        this.unassignedLoadStep = 20;
+        this.selectedUnassigned = new Set();
+        this.assignedSearch = '';
+        this.assignedJobFilter = params.jobId ? parseInt(params.jobId, 10) : null;
+        this.assignedVersionFilter = params.versionId ? parseInt(params.versionId, 10) : null;
+        this.assignedStatusFilter = '';
+        this.assignedDisplayLimit = 20;
+        this.assignedLoadStep = 20;
+        this.selectedAssigned = new Set();
+        this.activeTab = this.assignedJobFilter ? 'assigned' : 'versions'; // التبويب الافتراضي للإصدارات
     }
 
     async fetchData() {
@@ -34,8 +51,11 @@ export class CandidatesSection {
             unassignedSubtitle: isAr ? "مرشحون مضافون للنظام ولكن لم يتم ربطهم بأي تقديم أو وظيفة بعد." : "Candidates registered in the system but not yet linked to any job position or version.",
             noJobs: isAr ? "لا توجد وظائف مفعلة حالياً." : "No active jobs found.",
             noUnassigned: isAr ? "لا يوجد مرشحين غير معينين." : "No unassigned candidates.",
+            noAssignedCandidates: isAr ? "لا يوجد مرشحين معينين." : "No assigned candidates.",
             linkJob: isAr ? "ربط بوظيفة" : "Link to Job",
             unlinkJob: isAr ? "إلغاء التقديم" : "Unlink Application",
+            assignedTitle: isAr ? "المرشحون المعينون" : "Assigned Candidates",
+            assignedSubtitle: isAr ? "المرشحون المرتبطون حالياً بوظائف وإصدارات." : "Candidates currently linked to jobs and versions.",
             overallScore: isAr ? "التقييم الكلي" : "AI Score",
             confidence: isAr ? "ثقة الذكاء الاصطناعي" : "Confidence",
             recBadge: isAr ? "التوصية" : "Recommendation",
@@ -48,189 +68,37 @@ export class CandidatesSection {
         };
 
         // Render Jobs Accordion
-        let jobsHtml = '';
-        if (this.jobs.length === 0) {
-            jobsHtml = `<div class="empty-state">${labels.noJobs}</div>`;
-        } else {
-            jobsHtml = this.jobs.map((job, jobIndex) => {
-                // Calculate total candidates for this job
-                const totalCandCount = job.versions.reduce((sum, v) => sum + v.candidate_count, 0);
-                
-                const versionsHtml = job.versions.map(v => {
-                    let candRowsHtml = '';
-                    if (v.candidates.length === 0) {
-                        candRowsHtml = `<tr><td colspan="7" class="text-center">${t('noData')}</td></tr>`;
-                    } else {
-                        candRowsHtml = v.candidates.map((c, idx) => {
-                            // Rank Badges
-                            let rankBadge = '';
-                            if (idx === 0) rankBadge = `<span class="rank-badge rank-1" title="Top Performer">🥇 1</span>`;
-                            else if (idx === 1) rankBadge = `<span class="rank-badge rank-2">🥈 2</span>`;
-                            else if (idx === 2) rankBadge = `<span class="rank-badge rank-3">🥉 3</span>`;
-                            else rankBadge = `<span class="rank-badge rank-other">${idx + 1}</span>`;
+        const jobsHtml = renderJobsSection(this.jobs, labels, isAr);
 
-                            // Evaluation Score Progress Bar
-                            const score = c.overall_score !== null ? Math.round(c.overall_score) : null;
-                            let progressBarHtml = `<span class="text-muted" style="font-size: 0.85rem;">Pending Evaluation</span>`;
-                            if (score !== null) {
-                                let progressColor = 'var(--danger-color, #ef4444)';
-                                if (score >= 80) progressColor = '#10b981'; // Emerald
-                                else if (score >= 50) progressColor = '#f59e0b'; // Gold
-                                
-                                progressBarHtml = `
-                                    <div class="score-container" style="display: flex; align-items: center; gap: 0.5rem; min-width: 120px;">
-                                        <div class="score-progress-bg" style="flex: 1; background: rgba(0,0,0,0.05); height: 8px; border-radius: 4px; overflow: hidden;">
-                                            <div style="background: ${progressColor}; width: ${score}%; height: 100%; border-radius: 4px; transition: width 0.5s ease;"></div>
-                                        </div>
-                                        <strong style="font-size: 0.9rem; color: ${progressColor};">${score}%</strong>
-                                    </div>
-                                `;
-                            }
+        const assignedCandidates = this._getAssignedCandidates();
+        const assignedHtml = renderAssignedCandidatesSection(
+            assignedCandidates,
+            this.assignedSearch,
+            this.assignedDisplayLimit,
+            this.assignedJobFilter,
+            this.assignedVersionFilter,
+            this.assignedStatusFilter,
+            this.selectedAssigned,
+            this.jobs,
+            labels,
+            isAr
+        );
 
-                            // AI Confidence Badge
-                            let confidenceBadge = '';
-                            if (c.confidence_score !== null) {
-                                const confidence = c.confidence_score > 1 ? Math.round(c.confidence_score) : Math.round(c.confidence_score * 100);
-                                confidenceBadge = `<span class="badge badge-outline-info" style="font-size:0.75rem; margin-top:0.25rem;"><i class="fas fa-brain"></i> ${confidence}% ${isAr ? 'ثقة' : 'Confidence'}</span>`;
-                            }
-
-                            // Recommendation Badge
-                            let recBadge = `<span class="badge badge-secondary">-</span>`;
-                            if (c.hiring_recommendation) {
-                                const rec = String(c.hiring_recommendation).toLowerCase();
-                                if (rec.includes('strongly_recommend') || rec.includes('strong_hire')) {
-                                    recBadge = `<span class="badge badge-success" style="background:#10b981; color:white;"><i class="fas fa-star"></i> ${isAr ? 'توظيف مؤكد' : 'Strong Hire'}</span>`;
-                                } else if (rec.includes('do_not_recommend') || rec.includes('no_hire') || rec.includes('strong_no_hire')) {
-                                    const isStrongNo = rec.includes('strong_no_hire') || rec.includes('do_not_recommend');
-                                    recBadge = `<span class="badge badge-danger" style="background:#f43f5e; color:white;"><i class="fas fa-thumbs-down"></i> ${isStrongNo ? (isAr ? 'رفض قاطع' : 'Strong No Hire') : (isAr ? 'استبعاد' : 'No Hire')}</span>`;
-                                } else if (rec.includes('recommend') || rec.includes('hire')) {
-                                    recBadge = `<span class="badge badge-info" style="background:#00b488; color:white;"><i class="fas fa-thumbs-up"></i> ${isAr ? 'توظيف' : 'Hire'}</span>`;
-                                } else if (rec.includes('neutral')) {
-                                    recBadge = `<span class="badge badge-warning" style="background:#f59e0b; color:white;"><i class="fas fa-minus-circle"></i> ${isAr ? 'محايد' : 'Neutral'}</span>`;
-                                } else {
-                                    recBadge = `<span class="badge badge-secondary">${c.hiring_recommendation}</span>`;
-                                }
-                            }
-
-                            // Application Status Pill
-                            let statusPill = `<span class="status-pill status-${c.app_status || 'applied'}">${c.app_status || 'applied'}</span>`;
-
-                            // Resume Button Action
-                            const resumeBtn = c.resume_file_path 
-                                ? `<button class="btn-action btn-delete-resume del-resume-btn" data-id="${c.candidate_id}" title="Delete Resume"><i class="fas fa-file-pdf" style="color:var(--danger-color);"></i> ×</button>` 
-                                : `<button class="btn-action btn-upload-resume upload-resume-btn" data-id="${c.candidate_id}" title="Upload Resume"><i class="fas fa-upload"></i></button>`;
-
-                            return `
-                                <tr class="leaderboard-row">
-                                    <td>${rankBadge}</td>
-                                    <td>
-                                        <div class="candidate-meta">
-                                            <strong>${c.full_name}</strong>
-                                            <div style="font-size:0.8rem; color:var(--text-muted);">${c.email} | <span style="font-style:italic;">${c.source || 'Direct'}</span></div>
-                                        </div>
-                                    </td>
-                                    <td>
-                                        ${progressBarHtml}
-                                        ${confidenceBadge}
-                                    </td>
-                                    <td>${recBadge}</td>
-                                    <td>${statusPill}</td>
-                                    <td class="text-center">${resumeBtn}</td>
-                                    <td>
-                                        <div class="actions-group">
-                                            <button class="btn-action view-transcripts-btn" data-id="${c.candidate_id}" title="${isAr ? 'سجلات المقابلات' : 'Interview Transcripts'}"><i class="fas fa-comments" style="color:var(--primary-color);"></i></button>
-                                            <button class="btn-action edit-cand-btn" data-id="${c.candidate_id}" title="Edit"><i class="fas fa-edit"></i></button>
-                                            <button class="btn-action delete-app-btn" data-app-id="${c.app_id}" title="${labels.unlinkJob}"><i class="fas fa-unlink" style="color:var(--warning-color);"></i></button>
-                                            <button class="btn-action delete-cand-btn" data-id="${c.candidate_id}" style="color:var(--danger-color);" title="Delete Candidate"><i class="fas fa-trash-alt"></i></button>
-                                        </div>
-                                    </td>
-                                </tr>
-                            `;
-                        }).join('');
-                    }
-
-                    return `
-                        <div class="version-segment" style="margin-top: 1.5rem; background: var(--bg-primary); border-radius: 8px; padding: 1.2rem; border: 1px solid var(--border-color);">
-                            <div class="version-header" style="display:flex; justify-content:space-between; align-items:center; margin-bottom:1rem; border-bottom: 2px solid var(--border-color); padding-bottom: 0.5rem;">
-                                <h4 style="margin:0; color:var(--primary-color); display:flex; align-items:center; gap:0.5rem;">
-                                    <i class="fas fa-code-branch" style="color: var(--secondary-color);"></i>
-                                    Version ${v.version_number} 
-                                    <span style="font-size:0.85rem; font-weight:normal; color:var(--text-muted);">(${v.candidate_count} ${labels.totalCandidates})</span>
-                                </h4>
-                            </div>
-                            <div class="table-responsive">
-                                <table class="table premium-table">
-                                    <thead>
-                                        <tr>
-                                            <th style="width: 80px;">${labels.rank}</th>
-                                            <th>${labels.candidateInfo}</th>
-                                            <th style="width: 200px;">${labels.overallScore}</th>
-                                            <th>${labels.recBadge}</th>
-                                            <th>${labels.status}</th>
-                                            <th style="width: 100px;" class="text-center">${labels.resume}</th>
-                                            <th style="width: 150px;">${labels.actions}</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        ${candRowsHtml}
-                                    </tbody>
-                                </table>
-                            </div>
-                        </div>
-                    `;
-                }).join('');
-
-                return `
-                    <div class="job-accordion-card card" style="margin-bottom:1rem; border-left: 4px solid var(--primary-color);">
-                        <div class="job-card-header accordion-toggle" data-target="job-body-${jobIndex}" style="padding:1.5rem; display:flex; justify-content:space-between; align-items:center; cursor:pointer;">
-                            <div>
-                                <h3 style="margin:0; font-size:1.3rem; color:var(--text-color);">${job.job_title}</h3>
-                                <div style="font-size:0.85rem; color:var(--text-muted); margin-top:0.25rem;">
-                                    <i class="fas fa-building"></i> ${job.department} | <i class="fas fa-users"></i> ${totalCandCount} ${labels.totalCandidates}
-                                </div>
-                            </div>
-                            <div style="display:flex; align-items:center; gap:1rem;">
-                                <span class="badge badge-primary-subtle" style="padding: 0.5rem 0.8rem; border-radius: 20px;">${job.versions.length} Versions</span>
-                                <i class="fas fa-chevron-down toggle-icon" style="transition: transform 0.3s ease;"></i>
-                            </div>
-                        </div>
-                        <div id="job-body-${jobIndex}" class="job-card-body" style="display: none; padding: 0 1.5rem 1.5rem 1.5rem; border-top:1px solid var(--border-color);">
-                            ${versionsHtml}
-                        </div>
-                    </div>
-                `;
-            }).join('');
-        }
-
-        // Render Unassigned Candidates Section
-        let unassignedRowsHtml = '';
-        if (this.unassigned.length === 0) {
-            unassignedRowsHtml = `<tr><td colspan="6" class="text-center text-muted" style="padding: 2rem;">${labels.noUnassigned}</td></tr>`;
-        } else {
-            unassignedRowsHtml = this.unassigned.map(c => {
-                const resumeBtn = c.resume_file_path 
-                    ? `<button class="btn-action btn-delete-resume del-resume-btn" data-id="${c.candidate_id}" title="Delete Resume"><i class="fas fa-file-pdf" style="color:var(--danger-color);"></i> ×</button>` 
-                    : `<button class="btn-action btn-upload-resume upload-resume-btn" data-id="${c.candidate_id}" title="Upload Resume"><i class="fas fa-upload"></i></button>`;
-
-                return `
-                    <tr>
-                        <td><strong>${c.full_name}</strong></td>
-                        <td>${c.email}</td>
-                        <td>${c.phone || '-'}</td>
-                        <td>${c.source || '-'}</td>
-                        <td class="text-center">${resumeBtn}</td>
-                        <td>
-                            <div class="actions-group">
-                                <button class="btn btn-outline-info link-job-btn" data-id="${c.candidate_id}" style="padding: 0.3rem 0.6rem; font-size: 0.8rem;"><i class="fas fa-link"></i> ${labels.linkJob}</button>
-                                <button class="btn-action view-transcripts-btn" data-id="${c.candidate_id}" title="${isAr ? 'سجلات المقابلات' : 'Interview Transcripts'}"><i class="fas fa-comments" style="color:var(--primary-color);"></i></button>
-                                <button class="btn-action edit-cand-btn" data-id="${c.candidate_id}" title="Edit"><i class="fas fa-edit"></i></button>
-                                <button class="btn-action delete-cand-btn" data-id="${c.candidate_id}" style="color:var(--danger-color);" title="Delete"><i class="fas fa-trash-alt"></i></button>
-                            </div>
-                        </td>
-                    </tr>
-                `;
-            }).join('');
-        }
+        const assignedJobLabel = this.assignedJobFilter ? (this.jobs.find(j => j.job_id === this.assignedJobFilter)?.title || this.jobs.find(j => j.job_id === this.assignedJobFilter)?.job_title || `Job #${this.assignedJobFilter}`) : null;
+        const assignedFilterNotice = assignedJobLabel ? `
+            <div style="margin-bottom:1rem;padding:1rem;border-radius:var(--radius-md);background:var(--surface-color);border:1px solid var(--border-color);font-size:0.95rem;color:var(--text-muted);">
+                Showing candidates for <strong>${assignedJobLabel}</strong>.
+            </div>` : '';
+        const unassignedHtml = renderUnassignedCandidatesSection(
+            this.unassigned,
+            this.unassignedSearch,
+            this.unassignedDisplayLimit,
+            this.selectedUnassigned,
+            this.unassignedSourceFilter,
+            this.unassignedActiveFilter,
+            labels,
+            isAr
+        );
 
         return `
             <style>
@@ -319,6 +187,19 @@ export class CandidatesSection {
                     display: flex;
                     gap: 0.3rem;
                 }
+                .unassigned-toolbar {
+                    border-bottom: 1px solid var(--border-color);
+                    padding-bottom: 1rem;
+                    margin-bottom: 1rem;
+                }
+                .unassigned-toolbar input[type="search"] {
+                    min-width: 260px;
+                    max-width: 360px;
+                }
+                .unassigned-footer {
+                    border-top: 1px solid var(--border-color);
+                    padding-top: 1rem;
+                }
                 .status-pill {
                     display: inline-block;
                     padding: 0.25rem 0.6rem;
@@ -340,11 +221,19 @@ export class CandidatesSection {
                 .badge-secondary { background: #64748b; color: white; border-radius:4px; padding:2px 6px; }
                 .badge-outline-info { border: 1px solid #3b82f6; color: #3b82f6; border-radius:4px; padding:1px 4px; display:inline-block; }
                 .empty-state { text-align:center; padding:3rem; border:2px dashed var(--border-color); border-radius:12px; color:var(--text-muted); }
+                
+                /* التنسيق الخاص بالتبويبات (Tabs) */
+                .tab-btn {
+                    background: none; border: none; padding: 0.6rem 1.3rem; font-size: 1.05rem; font-weight: 700;
+                    color: var(--text-muted); border-bottom: 3px solid transparent; cursor: pointer;
+                    transition: all 0.2s ease; display: inline-flex; align-items: center; gap: 0.5rem; margin-bottom: -2px;
+                }
+                .tab-btn:hover { color: var(--primary-color); opacity: 0.9; }
+                .tab-btn.active { color: var(--primary-color); border-bottom-color: var(--primary-color); }
             </style>
 
             <div class="candidates-container">
-                <!-- Header Section -->
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2.5rem; flex-wrap: wrap; gap:1.5rem;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2rem; flex-wrap: wrap; gap:1.5rem;">
                     <div>
                         <h1 style="color: var(--primary-color); font-size: 2.2rem; font-weight: 800; margin: 0;">${labels.title}</h1>
                         <p style="color: var(--text-muted); margin: 0.3rem 0 0 0; font-size: 1.05rem;">${labels.subtitle}</p>
@@ -355,40 +244,171 @@ export class CandidatesSection {
                     </div>
                 </div>
 
-                <!-- Grouped Active Jobs Accordion -->
-                <div class="jobs-list" style="display: flex; flex-direction: column; gap: 1.5rem; margin-bottom: 3.5rem;">
-                    ${jobsHtml}
+                <div class="tabs-navigation" style="display: flex; gap: 1rem; margin-bottom: 2.5rem; border-bottom: 2px solid var(--border-color);">
+                    <button class="tab-btn ${this.activeTab === 'versions' ? 'active' : ''}" data-tab="versions">
+                        <i class="fas fa-layer-group"></i> ${isAr ? 'الوظائف والإصدارات' : 'Jobs & Versions'}
+                    </button>
+                    <button class="tab-btn ${this.activeTab === 'assigned' ? 'active' : ''}" data-tab="assigned">
+                        <i class="fas fa-briefcase"></i> ${labels.assignedTitle}
+                    </button>
+                    <button class="tab-btn ${this.activeTab === 'unassigned' ? 'active' : ''}" data-tab="unassigned">
+                        <i class="fas fa-user-tag"></i> ${labels.unassignedTitle}
+                    </button>
                 </div>
 
-                <!-- Unassigned Candidates Segment -->
-                <div class="card" style="box-shadow: 0 4px 20px rgba(0,0,0,0.03); border-radius: 12px; background: var(--bg-card);">
-                    <div style="padding: 1.5rem; border-bottom: 1px solid var(--border-color);">
-                        <h2 style="margin: 0; color: var(--text-color); font-size: 1.4rem; font-weight: 700;">${labels.unassignedTitle}</h2>
-                        <p style="margin: 0.2rem 0 0 0; font-size: 0.85rem; color: var(--text-muted);">${labels.unassignedSubtitle}</p>
+                ${this.activeTab === 'versions' ? `
+                    <div class="jobs-list" style="display: flex; flex-direction: column; gap: 1.5rem; margin-bottom: 3.5rem;">
+                        ${jobsHtml}
                     </div>
-                    <div class="table-responsive" style="padding: 0 1.5rem 1.5rem 1.5rem;">
-                        <table class="table">
-                            <thead>
-                                <tr>
-                                    <th>Name</th>
-                                    <th>Email</th>
-                                    <th>Phone</th>
-                                    <th>Source</th>
-                                    <th class="text-center" style="width: 100px;">Resume</th>
-                                    <th style="width: 250px;">Actions</th>
-                                </tr>
-                            </thead>
-                            <tbody id="unassigned-tbody">
-                                ${unassignedRowsHtml}
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
+                ` : this.activeTab === 'assigned' ? `
+                    ${assignedFilterNotice}${assignedHtml}
+                ` : `
+                    ${unassignedHtml}
+                `}
             </div>
         `;
     }
 
+    _getFilteredUnassigned() {
+        const query = (this.unassignedSearch || '').toLowerCase().trim();
+        let filtered = this.unassigned;
+
+        if (this.unassignedSourceFilter) {
+            filtered = filtered.filter(c => (c.source || '').toLowerCase() === this.unassignedSourceFilter.toLowerCase());
+        }
+        if (this.unassignedActiveFilter) {
+            filtered = filtered.filter(c => {
+                if (this.unassignedActiveFilter === 'active') return c.is_active;
+                if (this.unassignedActiveFilter === 'inactive') return !c.is_active;
+                return true;
+            });
+        }
+        if (!query) return filtered;
+
+        return filtered.filter(c => {
+            const value = `${c.full_name || ''} ${c.email || ''} ${c.phone || ''} ${c.source || ''}`.toLowerCase();
+            return value.includes(query);
+        });
+    }
+
+    _getAssignedCandidates() {
+        const grouped = new Map();
+
+        for (const job of this.jobs) {
+            const jobId = job.job_id;
+            const jobTitle = job.job_title || '-';
+            for (const version of (job.versions || [])) {
+                const versionId = version.version_id;
+                const versionNumber = version.version_number;
+                for (const candidate of (version.candidates || [])) {
+                    const app = {
+                        app_id: candidate.app_id,
+                        job_id: jobId,
+                        job_title: jobTitle,
+                        version_id: versionId,
+                        version_number: versionNumber,
+                        app_status: candidate.app_status,
+                        source: candidate.source,
+                        overall_score: candidate.overall_score,
+                        confidence_score: candidate.confidence_score,
+                        hiring_recommendation: candidate.hiring_recommendation
+                    };
+
+                    if (!grouped.has(candidate.candidate_id)) {
+                        grouped.set(candidate.candidate_id, {
+                            candidate_id: candidate.candidate_id,
+                            full_name: candidate.full_name,
+                            email: candidate.email,
+                            source: candidate.source,
+                            is_active: candidate.is_active,
+                            applications: [app]
+                        });
+                    } else {
+                        grouped.get(candidate.candidate_id).applications.push(app);
+                    }
+                }
+            }
+        }
+
+        return Array.from(grouped.values());
+    }
+
+    _getFilteredAssignedCandidates() {
+        const query = (this.assignedSearch || '').toLowerCase().trim();
+        let assigned = this._getAssignedCandidates();
+
+        if (this.assignedJobFilter) {
+            assigned = assigned.filter(c => c.applications.some(app => app.job_id === this.assignedJobFilter));
+        }
+        if (this.assignedVersionFilter) {
+            assigned = assigned.filter(c => c.applications.some(app => app.version_id === this.assignedVersionFilter));
+        }
+        if (this.assignedStatusFilter) {
+            assigned = assigned.filter(c => c.applications.some(app => (app.app_status || '').toLowerCase() === this.assignedStatusFilter));
+        }
+        if (!query) return assigned;
+
+        return assigned.filter(c => {
+            const jobText = (c.applications || []).map(app => `${app.job_title || ''} ${app.version_number || ''} ${app.app_status || ''}`).join(' ');
+            const value = `${c.full_name || ''} ${c.email || ''} ${c.source || ''} ${jobText}`.toLowerCase();
+            return value.includes(query);
+        });
+    }
+
+    _getVisibleAssignedCandidates() {
+        return this._getFilteredAssignedCandidates().slice(0, this.assignedDisplayLimit);
+    }
+
+    async deleteAllUnassigned() {
+        const isAr = getLang() === 'ar';
+        if (!confirm(isAr ? 'هل أنت متأكد من حذف جميع المرشحين غير المعينين؟ (لا يمكن التراجع)' : 'Are you sure you want to delete ALL unassigned candidates? (Cannot be undone)')) return;
+
+        try {
+            await api.fetch('/candidates/unassigned', { method: 'DELETE' });
+            Toast.show(isAr ? 'تم حذف جميع المرشحين غير المعينين' : 'All unassigned candidates deleted', 'success');
+            await this.refresh();
+        } catch (err) {
+            Toast.show(isAr ? 'فشل حذف المرشحين غير المعينين' : 'Failed to delete unassigned candidates', 'error');
+        }
+    }
+
+    async deleteAllAssigned() {
+        const isAr = getLang() === 'ar';
+        if (!confirm(isAr ? 'هل أنت متأكد من حذف جميع المرشحين المعينين؟ (لا يمكن التراجع)' : 'Are you sure you want to delete ALL assigned candidates? (Cannot be undone)')) return;
+
+        try {
+            await api.fetch('/candidates/assigned', { method: 'DELETE' });
+            Toast.show(isAr ? 'تم حذف جميع المرشحين المعينين' : 'All assigned candidates deleted', 'success');
+            await this.refresh();
+        } catch (err) {
+            Toast.show(isAr ? 'فشل حذف المرشحين المعينين' : 'Failed to delete assigned candidates', 'error');
+        }
+    }
+
+    _getVisibleUnassigned() {
+        return this._getFilteredUnassigned().slice(0, this.unassignedDisplayLimit);
+    }
+
+    async showMoreUnassigned() {
+        this.unassignedDisplayLimit += 20;
+        await this.refresh();
+    }
+
+    async showMoreAssigned() {
+        this.assignedDisplayLimit += 20;
+        await this.refresh();
+    }
+
     mount() {
+        // إدارة أزرار التبويب (Tabs)
+        const tabButtons = document.querySelectorAll('.tab-btn');
+        tabButtons.forEach(btn => {
+            btn.addEventListener('click', async () => {
+                this.activeTab = btn.dataset.tab;
+                await this.refresh();
+            });
+        });
+
         // 1. Add Candidate Button
         const addBtn = document.getElementById('add-cand-btn');
         if (addBtn) {
@@ -429,6 +449,18 @@ export class CandidatesSection {
             }
             this.clickListener = this.handleActionsClick.bind(this);
             contentArea.addEventListener('click', this.clickListener);
+
+            if (this.inputListener) {
+                contentArea.removeEventListener('input', this.inputListener);
+            }
+            this.inputListener = this.handleContentInput.bind(this);
+            contentArea.addEventListener('input', this.inputListener);
+
+            if (this.changeListener) {
+                contentArea.removeEventListener('change', this.changeListener);
+            }
+            this.changeListener = this.handleContentChange.bind(this);
+            contentArea.addEventListener('change', this.changeListener);
         }
     }
 
@@ -440,7 +472,31 @@ export class CandidatesSection {
         const linkBtn = e.target.closest('.link-job-btn');
         const deleteAppBtn = e.target.closest('.delete-app-btn');
         const viewTranscriptsBtn = e.target.closest('.view-transcripts-btn');
+        const bulkLinkBtn = e.target.closest('#bulk-link-selected-btn');
+        const bulkDeleteBtn = e.target.closest('#bulk-delete-selected-btn');
+        const bulkLinkAssignedBtn = e.target.closest('#bulk-link-assigned-btn');
+        const bulkDeleteAssignedBtn = e.target.closest('#bulk-delete-assigned-btn');
+        const showMoreUnassignedBtn = e.target.closest('#show-more-unassigned-btn');
+        const deleteAllUnassignedBtn = e.target.closest('#delete-all-unassigned-btn');
+        const showMoreAssignedBtn = e.target.closest('#show-more-assigned-btn');
+        const deleteAllAssignedBtn = e.target.closest('#delete-all-assigned-btn');
 
+        if (deleteAllUnassignedBtn) {
+            e.stopPropagation();
+            this.deleteAllUnassigned();
+        }
+        if (deleteAllAssignedBtn) {
+            e.stopPropagation();
+            this.deleteAllAssigned();
+        }
+        if (bulkLinkAssignedBtn) {
+            e.stopPropagation();
+            this.openBulkLinkJobModal(Array.from(this.selectedAssigned));
+        }
+        if (bulkDeleteAssignedBtn) {
+            e.stopPropagation();
+            this.bulkDeleteSelectedAssigned();
+        }
         if (viewTranscriptsBtn) {
             e.stopPropagation();
             this.openTranscriptsModal(viewTranscriptsBtn.dataset.id);
@@ -486,10 +542,282 @@ export class CandidatesSection {
             e.stopPropagation();
             this.openLinkJobModal(linkBtn.dataset.id);
         }
+        if (bulkLinkBtn) {
+            e.stopPropagation();
+            this.openBulkLinkJobModal();
+        }
+        if (bulkDeleteBtn) {
+            e.stopPropagation();
+            this.bulkDeleteSelectedCandidates();
+        }
+        if (showMoreUnassignedBtn) {
+            e.stopPropagation();
+            this.showMoreUnassigned();
+        }
+        if (showMoreAssignedBtn) {
+            e.stopPropagation();
+            this.showMoreAssigned();
+        }
         if (deleteAppBtn) {
             e.stopPropagation();
             this.deleteApplication(deleteAppBtn.dataset.appId);
         }
+    }
+
+    async handleContentInput(e) {
+        const unassignedSearchInput = e.target.closest('#unassigned-search');
+        const assignedSearchInput = e.target.closest('#assigned-search');
+
+        if (unassignedSearchInput) {
+            this.unassignedSearch = unassignedSearchInput.value.trim();
+            await this.refresh();
+            return;
+        }
+        if (assignedSearchInput) {
+            this.assignedSearch = assignedSearchInput.value.trim();
+            await this.refresh();
+        }
+    }
+
+    async handleContentChange(e) {
+        const unassignedCheckbox = e.target.closest('.unassigned-select-checkbox');
+        const assignedCheckbox = e.target.closest('.assigned-select-checkbox');
+        const selectAllUnassignedCheckbox = e.target.closest('#select-all-unassigned');
+        const selectAllAssignedCheckbox = e.target.closest('#select-all-assigned');
+        const assignedJobFilter = e.target.closest('#assigned-job-filter');
+        const assignedVersionFilter = e.target.closest('#assigned-version-filter');
+        const assignedStatusFilter = e.target.closest('#assigned-status-filter');
+        const unassignedSourceFilter = e.target.closest('#unassigned-source-filter');
+        const unassignedActiveFilter = e.target.closest('#unassigned-active-filter');
+
+        if (unassignedCheckbox) {
+            const candidateId = parseInt(unassignedCheckbox.dataset.id);
+            if (unassignedCheckbox.checked) {
+                this.selectedUnassigned.add(candidateId);
+            } else {
+                this.selectedUnassigned.delete(candidateId);
+            }
+            await this.refresh();
+            return;
+        }
+
+        if (assignedCheckbox) {
+            const candidateId = parseInt(assignedCheckbox.dataset.id);
+            if (assignedCheckbox.checked) {
+                this.selectedAssigned.add(candidateId);
+            } else {
+                this.selectedAssigned.delete(candidateId);
+            }
+            await this.refresh();
+            return;
+        }
+
+        if (selectAllUnassignedCheckbox) {
+            const visible = this._getVisibleUnassigned();
+            if (selectAllUnassignedCheckbox.checked) {
+                visible.forEach(c => this.selectedUnassigned.add(c.candidate_id));
+            } else {
+                visible.forEach(c => this.selectedUnassigned.delete(c.candidate_id));
+            }
+            await this.refresh();
+            return;
+        }
+
+        if (selectAllAssignedCheckbox) {
+            const visible = this._getVisibleAssignedCandidates();
+            if (selectAllAssignedCheckbox.checked) {
+                visible.forEach(c => this.selectedAssigned.add(c.candidate_id));
+            } else {
+                visible.forEach(c => this.selectedAssigned.delete(c.candidate_id));
+            }
+            await this.refresh();
+            return;
+        }
+
+        if (assignedJobFilter) {
+            this.assignedJobFilter = assignedJobFilter.value ? parseInt(assignedJobFilter.value, 10) : null;
+            this.assignedVersionFilter = null;
+            await this.refresh();
+            return;
+        }
+
+        if (assignedVersionFilter) {
+            this.assignedVersionFilter = assignedVersionFilter.value ? parseInt(assignedVersionFilter.value, 10) : null;
+            await this.refresh();
+            return;
+        }
+
+        if (assignedStatusFilter) {
+            this.assignedStatusFilter = assignedStatusFilter.value;
+            await this.refresh();
+            return;
+        }
+
+        if (unassignedSourceFilter) {
+            this.unassignedSourceFilter = unassignedSourceFilter.value;
+            await this.refresh();
+            return;
+        }
+
+        if (unassignedActiveFilter) {
+            this.unassignedActiveFilter = unassignedActiveFilter.value;
+            await this.refresh();
+            return;
+        }
+    }
+
+    toggleSelectAllUnassigned() {
+        const visible = this._getVisibleUnassigned();
+        if (visible.length === 0) return;
+        const allSelected = visible.every(c => this.selectedUnassigned.has(c.candidate_id));
+        if (allSelected) {
+            visible.forEach(c => this.selectedUnassigned.delete(c.candidate_id));
+        } else {
+            visible.forEach(c => this.selectedUnassigned.add(c.candidate_id));
+        }
+        return this.refresh();
+    }
+
+    async clearUnassignedSelection() {
+        this.selectedUnassigned.clear();
+        await this.refresh();
+    }
+
+    async openBulkLinkJobModal(candidateIds = null) {
+        const isAr = getLang() === 'ar';
+        candidateIds = candidateIds || Array.from(this.selectedUnassigned);
+        if (!candidateIds.length) {
+            Toast.show(isAr ? 'الرجاء تحديد مرشح واحد على الأقل.' : 'Please select at least one candidate.', 'warning');
+            return;
+        }
+
+        const availableJobs = this.jobs.filter(job => Array.isArray(job.versions) && job.versions.length);
+        if (!availableJobs.length) {
+            Toast.show(isAr ? 'لا توجد وظائف متاحة حالياً.' : 'No available job versions.', 'warning');
+            return;
+        }
+
+        const jobOptions = availableJobs.map((job, idx) => `
+            <option value="${idx}">${job.job_title}</option>
+        `).join('');
+
+        const buildVersionOptions = (job) => job.versions.map(v => `
+            <option value="${v.version_id}">${isAr ? 'الإصدار' : 'Version'} ${v.version_number}</option>
+        `).join('');
+
+        const content = `
+            <div class="form-group">
+                <label class="form-label">${isAr ? 'اختر الوظيفة' : 'Select Job'}</label>
+                <select id="bulk-link-job-id" class="form-control">
+                    ${jobOptions}
+                </select>
+            </div>
+            <div class="form-group" style="margin-top:1rem;">
+                <label class="form-label">${isAr ? 'اختر الإصدار' : 'Select Version'}</label>
+                <select id="bulk-link-job-version-id" class="form-control">
+                    ${buildVersionOptions(availableJobs[0])}
+                </select>
+            </div>
+            <p style="font-size:0.9rem; color:var(--text-muted); margin-top:0.75rem;">${isAr ? 'سيتم ربط جميع المرشحين المحددين بهذا الإصدار.' : 'All selected candidates will be linked to this version.'}</p>
+        `;
+
+        const modal = new Modal({
+            title: isAr ? 'ربط المحددين بوظيفة' : 'Link Selected Candidates to Job',
+            content,
+            saveText: isAr ? 'ربط الآن' : 'Link Now',
+            onSave: async (modalEl) => {
+                const selectedVersionId = parseInt(modalEl.querySelector('#bulk-link-job-version-id').value);
+                if (!selectedVersionId) {
+                    Toast.show(isAr ? 'الرجاء اختيار إصدار صالح.' : 'Please select a valid version.', 'error');
+                    throw new Error('Invalid version');
+                }
+
+                const results = [];
+                for (const candidateId of candidateIds) {
+                    try {
+                        await api.post('/applications', {
+                            candidate_id: candidateId,
+                            job_version_id: selectedVersionId
+                        });
+                        results.push({ candidateId, status: 'success' });
+                    } catch (err) {
+                        results.push({ candidateId, status: 'error', message: err?.message || 'Failed' });
+                    }
+                }
+
+                const successCount = results.filter(r => r.status === 'success').length;
+                if (successCount > 0) {
+                    Toast.show(isAr ? `تم ربط ${successCount} مرشح${successCount === 1 ? '' : 'ين'} بنجاح.` : `${successCount} candidate(s) linked successfully.`, 'success');
+                }
+                await this.refresh();
+            }
+        });
+        modal.show();
+
+        const jobSelect = modal.element.querySelector('#bulk-link-job-id');
+        const versionSelect = modal.element.querySelector('#bulk-link-job-version-id');
+        if (jobSelect && versionSelect) {
+            jobSelect.addEventListener('change', () => {
+                const selectedJob = availableJobs[parseInt(jobSelect.value, 10)] || availableJobs[0];
+                versionSelect.innerHTML = buildVersionOptions(selectedJob);
+            });
+        }
+    }
+
+    async bulkDeleteSelectedCandidates() {
+        const isAr = getLang() === 'ar';
+        const candidateIds = Array.from(this.selectedUnassigned);
+        if (!candidateIds.length) {
+            Toast.show(isAr ? 'الرجاء تحديد مرشح واحد على الأقل.' : 'Please select at least one candidate.', 'warning');
+            return;
+        }
+
+        const confirmed = confirm(isAr ? 'هل أنت متأكد من حذف المرشحين المحددين نهائياً؟' : 'Are you sure you want to delete selected candidates permanently?');
+        if (!confirmed) return;
+
+        const deletions = [];
+        for (const id of candidateIds) {
+            try {
+                await api.fetch(`/candidates/${id}`, { method: 'DELETE' });
+                deletions.push(id);
+            } catch (err) {
+                console.warn('Bulk delete failed for', id, err);
+            }
+        }
+
+        deletions.forEach(id => this.selectedUnassigned.delete(id));
+        if (deletions.length) {
+            Toast.show(isAr ? `تم حذف ${deletions.length} مرشح${deletions.length === 1 ? '' : 'ين'}.` : `${deletions.length} candidate(s) deleted.`, 'success');
+        }
+        await this.refresh();
+    }
+
+    async bulkDeleteSelectedAssigned() {
+        const isAr = getLang() === 'ar';
+        const candidateIds = Array.from(this.selectedAssigned);
+        if (!candidateIds.length) {
+            Toast.show(isAr ? 'الرجاء تحديد مرشح واحد على الأقل.' : 'Please select at least one candidate.', 'warning');
+            return;
+        }
+
+        const confirmed = confirm(isAr ? 'هل أنت متأكد من حذف المرشحين المعينين المحددين نهائياً؟' : 'Are you sure you want to delete selected assigned candidates permanently?');
+        if (!confirmed) return;
+
+        const deletions = [];
+        for (const id of candidateIds) {
+            try {
+                await api.fetch(`/candidates/${id}`, { method: 'DELETE' });
+                deletions.push(id);
+            } catch (err) {
+                console.warn('Bulk delete failed for', id, err);
+            }
+        }
+
+        deletions.forEach(id => this.selectedAssigned.delete(id));
+        if (deletions.length) {
+            Toast.show(isAr ? `تم حذف ${deletions.length} مرشح${deletions.length === 1 ? '' : 'ين'}.` : `${deletions.length} assigned candidate(s) deleted.`, 'success');
+        }
+        await this.refresh();
     }
 
     openCandidateForm(cand = null) {
@@ -591,25 +919,32 @@ export class CandidatesSection {
     }
 
     openLinkJobModal(candidateId) {
-        // Build Job Options list
-        let optionsHtml = '';
-        this.jobs.forEach(job => {
-            job.versions.forEach(v => {
-                optionsHtml += `<option value="${v.version_id}">${job.job_title} (Version ${v.version_number})</option>`;
-            });
-        });
-
-        if (!optionsHtml) {
-            Toast.show('No active Job Versions available. Please create a Job and a Version first.', 'warning');
+        const isAr = getLang() === 'ar';
+        const availableJobs = this.jobs.filter(job => Array.isArray(job.versions) && job.versions.length);
+        if (!availableJobs.length) {
+            Toast.show(isAr ? 'لا توجد وظائف متاحة حالياً.' : 'No active Job Versions available. Please create a Job and a Version first.', 'warning');
             return;
         }
 
-        const isAr = getLang() === 'ar';
+        const jobOptions = availableJobs.map((job, idx) => `
+            <option value="${idx}">${job.job_title}</option>
+        `).join('');
+
+        const buildVersionOptions = (job) => job.versions.map(v => `
+            <option value="${v.version_id}">${isAr ? 'الإصدار' : 'Version'} ${v.version_number}</option>
+        `).join('');
+
         const content = `
             <div class="form-group">
-                <label class="form-label">${isAr ? 'اختر الوظيفة والإصدار' : 'Select Job Version'}</label>
+                <label class="form-label">${isAr ? 'اختر الوظيفة' : 'Select Job'}</label>
+                <select id="link-job-id" class="form-control">
+                    ${jobOptions}
+                </select>
+            </div>
+            <div class="form-group" style="margin-top:1rem;">
+                <label class="form-label">${isAr ? 'اختر الإصدار' : 'Select Version'}</label>
                 <select id="link-job-version-id" class="form-control">
-                    ${optionsHtml}
+                    ${buildVersionOptions(availableJobs[0])}
                 </select>
             </div>
         `;
@@ -621,7 +956,7 @@ export class CandidatesSection {
             onSave: async (modalEl) => {
                 const jobVersionId = parseInt(modalEl.querySelector('#link-job-version-id').value);
                 if (!jobVersionId) {
-                    Toast.show('Please select a valid job version', 'error');
+                    Toast.show(isAr ? 'الرجاء اختيار إصدار صالح.' : 'Please select a valid job version', 'error');
                     throw new Error('No selection');
                 }
 
@@ -630,15 +965,24 @@ export class CandidatesSection {
                         candidate_id: parseInt(candidateId),
                         job_version_id: jobVersionId
                     });
-                    Toast.show('Candidate linked to job successfully', 'success');
+                    Toast.show(isAr ? 'تم ربط المرشح بالوظيفة بنجاح' : 'Candidate linked to job successfully', 'success');
                     await this.refresh();
                 } catch(e) {
-                    Toast.show(e.message || 'Failed to link candidate', 'error');
+                    Toast.show(e.message || (isAr ? 'فشل الربط' : 'Failed to link candidate'), 'error');
                     throw e;
                 }
             }
         });
         modal.show();
+
+        const jobSelect = modal.element.querySelector('#link-job-id');
+        const versionSelect = modal.element.querySelector('#link-job-version-id');
+        if (jobSelect && versionSelect) {
+            jobSelect.addEventListener('change', () => {
+                const selectedJob = availableJobs[parseInt(jobSelect.value, 10)] || availableJobs[0];
+                versionSelect.innerHTML = buildVersionOptions(selectedJob);
+            });
+        }
     }
 
     openUploadResumeModal(id) {
@@ -1049,7 +1393,6 @@ export class CandidatesSection {
         const content = `
             <div style="display:flex; flex-direction:column; gap:1.25rem;">
 
-                <!-- Format Guide -->
                 <div style="background:rgba(var(--primary-color-rgb,79,70,229),0.06); border:1px solid rgba(var(--primary-color-rgb,79,70,229),0.15); border-radius:10px; padding:1rem;">
                     <div style="display:flex; align-items:center; gap:0.5rem; margin-bottom:0.75rem;">
                         <i class="fas fa-info-circle" style="color:var(--primary-color);"></i>
@@ -1072,7 +1415,6 @@ export class CandidatesSection {
                     </button>
                 </div>
 
-                <!-- File Upload Area -->
                 <div>
                     <label class="form-label" style="font-weight:600;">${isAr ? 'اختر الملفات للاستيراد' : 'Select files to import'}</label>
                     <label for="import-file-input" id="import-drop-zone"
@@ -1088,7 +1430,6 @@ export class CandidatesSection {
                         multiple style="display:none;">
                 </div>
 
-                <!-- Results area (hidden initially) -->
                 <div id="import-results" style="display:none;"></div>
             </div>
         `;

@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, UploadFile, File, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy import func
+from sqlalchemy import func, delete
 import asyncio
 from typing import List, Dict, Any
 from app.database import get_db
@@ -198,6 +198,32 @@ async def get_organized_candidates(db: AsyncSession = Depends(get_db)):
         "jobs": organized_jobs,
         "unassigned": unassigned_list
     }
+
+@router.delete("/unassigned")
+async def delete_unassigned_candidates(db: AsyncSession = Depends(get_db)):
+    subquery = select(JobApplication.candidate_id).distinct()
+    unassigned_query = select(Candidate.id).where(~Candidate.id.in_(subquery))
+    unassigned_result = await db.execute(unassigned_query)
+    candidate_ids = [row[0] for row in unassigned_result.all()]
+
+    if candidate_ids:
+        await db.execute(delete(Candidate).where(Candidate.id.in_(candidate_ids)))
+        await db.commit()
+
+    return {"deleted": len(candidate_ids)}
+
+@router.delete("/assigned")
+async def delete_assigned_candidates(db: AsyncSession = Depends(get_db)):
+    assigned_subquery = select(JobApplication.candidate_id).distinct()
+    assigned_query = select(Candidate.id).where(Candidate.id.in_(assigned_subquery))
+    assigned_result = await db.execute(assigned_query)
+    candidate_ids = [row[0] for row in assigned_result.all()]
+
+    if candidate_ids:
+        await db.execute(delete(Candidate).where(Candidate.id.in_(candidate_ids)))
+        await db.commit()
+
+    return {"deleted": len(candidate_ids)}
 
 @router.post("", response_model=CandidateResponse)
 async def create_candidate(candidate_in: CandidateCreate, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):

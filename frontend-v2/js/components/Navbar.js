@@ -11,6 +11,8 @@ export class Navbar {
         const roleBadgeColor = { admin: 'var(--danger)', hr: 'var(--primary-color)', recruiter: 'var(--info)' };
         const roleColor = roleBadgeColor[user.role] || 'var(--text-muted)';
 
+        const activeTheme = document.documentElement.dataset.theme || 'light';
+        const themeIcon = activeTheme === 'dark' ? 'fa-sun' : 'fa-moon';
         const navHtml = `
             <a href="#/" class="nav-brand">
                 <i class="fas fa-brain"></i> AI Platform
@@ -23,7 +25,7 @@ export class Navbar {
             </ul>
             <div class="nav-controls">
                 <button id="btn-theme-toggle" class="btn btn-outline" style="padding:0.4rem 0.8rem;border-radius:50%;" title="Toggle Theme">
-                    <i class="fas fa-moon"></i>
+                    <i class="fas ${themeIcon}"></i>
                 </button>
                 <button id="btn-lang-toggle" class="btn btn-outline" title="Switch Language">
                     <i class="fas fa-globe"></i> ${t('switchLang')}
@@ -63,7 +65,12 @@ export class Navbar {
         });
 
         document.getElementById('btn-theme-toggle')?.addEventListener('click', () => {
-            document.documentElement.classList.toggle('dark-mode');
+            const currentTheme = document.documentElement.dataset.theme || 'light';
+            const nextTheme = currentTheme === 'dark' ? 'light' : 'dark';
+            document.documentElement.dataset.theme = nextTheme;
+            document.documentElement.classList.toggle('dark-mode', nextTheme === 'dark');
+            localStorage.setItem('theme', nextTheme);
+            this.render();
         });
 
         document.getElementById('btn-logout')?.addEventListener('click', async () => {

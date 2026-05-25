@@ -23,6 +23,38 @@ def _proposal_to_criteria_create(p) -> EvaluationCriteriaCreate:
     return EvaluationCriteriaCreate(**data)
 
 
+def _sum_criteria_weights(criteria_list: list) -> float:
+    return sum((getattr(c, "weight", 0.0) or 0.0) for c in criteria_list)
+
+
+def _normalize_ai_proposals(criteria_list: list) -> list[EvaluationCriteriaCreate]:
+    if not criteria_list:
+        return []
+
+    total_weight = _sum_criteria_weights(criteria_list)
+    if total_weight <= 0 or abs(total_weight - 100.0) < 1e-6:
+        return [_proposal_to_criteria_create(p) for p in criteria_list]
+
+    scale = 100.0 / total_weight
+    normalized_results: list[EvaluationCriteriaCreate] = []
+    running_total = 0.0
+    for index, proposal in enumerate(criteria_list):
+        criteria_create = _proposal_to_criteria_create(proposal)
+        if index == len(criteria_list) - 1:
+            weight = round(100.0 - running_total, 2)
+        else:
+            weight = round(criteria_create.weight * scale, 2)
+            running_total += weight
+        normalized_results.append(EvaluationCriteriaCreate(**{**criteria_create.model_dump(), "weight": weight}))
+
+    return normalized_results
+
+
+def _validate_total_weight(current_total: float, additional_weight: float):
+    if current_total + additional_weight > 100.0 + 1e-8:
+        raise HTTPException(status_code=400, detail="Total criteria weight cannot exceed 100%.")
+
+
 _criteria_generation_locks: dict[tuple[int, int], asyncio.Lock] = {}
 
 class JobService:
@@ -103,13 +135,13 @@ class JobVersionService:
         job = await JobService.get_job(db, job_id)
         versions = await JobVersionRepo.get_versions(db, job_id)
         version_number = len(versions) + 1
-        
+
         # If trigger_jd_agent is False, force manual criteria mode to bypass AI JD agent
         if version_in.trigger_jd_agent is False:
             version_in.criteria_mode = "manual"
-            
+
         version = await JobVersionRepo.create_version(db, job_id, version_in, version_number)
-        
+
         ai_proposals = []
         if version_in.criteria_mode in ["ai", "hybrid"] and version_in.raw_jd_text:
             try:
@@ -121,9 +153,9 @@ class JobVersionService:
                 print(f"ERROR in AI extraction: {root_error}")
                 raise HTTPException(status_code=502, detail=f"AI criteria extraction failed: {root_error}")
 
-            criteria_to_create = [_proposal_to_criteria_create(p) for p in ai_proposals]
+            criteria_to_create = _normalize_ai_proposals(ai_proposals)
             await CriteriaRepo.create_multiple_criteria(db, version.id, criteria_to_create)
-        
+
         return await JobVersionRepo.get_version(db, job_id, version.id)
 
     @staticmethod
@@ -146,7 +178,7 @@ class JobVersionService:
     @staticmethod
     async def delete_version(db: AsyncSession, job_id: int, version_id: int):
         version = await JobVersionService.get_version(db, job_id, version_id)
-        
+
         # Check if there are associated job applications
         from app.repositories.application_repo import ApplicationRepo
         apps = await ApplicationRepo.get_all(db, job_version_id=version_id)
@@ -155,18 +187,22 @@ class JobVersionService:
                 status_code=400,
                 detail="Cannot delete job version because it is referenced by active job applications."
             )
-            
+
         await JobVersionRepo.delete_version(db, version)
 
 class CriteriaService:
     @staticmethod
     async def add_criteria(db: AsyncSession, job_id: int, version_id: int, criteria_in: EvaluationCriteriaCreate):
         version = await JobVersionService.get_version(db, job_id, version_id)
+        current_total = sum(c.weight for c in (version.criteria or []))
+        _validate_total_weight(current_total, criteria_in.weight)
         return await CriteriaRepo.create_criteria(db, version.id, criteria_in)
 
     @staticmethod
     async def replace_criteria(db: AsyncSession, job_id: int, version_id: int, criteria_list: List[EvaluationCriteriaCreate]):
         version = await JobVersionService.get_version(db, job_id, version_id)
+        total_weight = sum(c.weight for c in criteria_list)
+        _validate_total_weight(0.0, total_weight)
         await CriteriaRepo.replace_all_for_version(db, version.id, criteria_list)
         return await JobVersionService.get_version(db, job_id, version_id)
 
@@ -201,7 +237,7 @@ class CriteriaService:
             # Clear existing criteria and replace with AI-suggested ones
             await CriteriaRepo.delete_all_for_version(db, version.id)
             if ai_proposals:
-                criteria_to_create = [_proposal_to_criteria_create(p) for p in ai_proposals]
+                criteria_to_create = _normalize_ai_proposals(ai_proposals)
                 await CriteriaRepo.create_multiple_criteria(db, version.id, criteria_to_create)
             
             return await JobVersionService.get_version(db, job_id, version_id)
