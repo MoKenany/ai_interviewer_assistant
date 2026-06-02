@@ -1,4 +1,4 @@
-﻿import { getLang } from '../core/i18n.js';
+import { getLang } from '../core/i18n.js';
 import { api } from '../core/api.js';
 
 export class DashboardSection {
@@ -81,7 +81,9 @@ export class DashboardSection {
             pulseOverviewTitle: isAr ? 'نبض سير العمل' : 'Workflow Pulse Overview',
             pulseOverviewSubtitle: isAr ? 'معدلات الجلسات والتقييمات والأداء العام.' : 'Core pipeline metrics in one view.',
             applicationStatusTitle: isAr ? 'حالة الطلبات' : 'Application Status Summary',
-            applicationStatusSubtitle: isAr ? 'توزيع حالة الطلب عبر القناة.' : 'Where applications currently sit in the funnel.'
+            applicationStatusSubtitle: isAr ? 'توزيع حالة الطلب عبر القناة.' : 'Where applications currently sit in the funnel.',
+            aiModeTitle: isAr ? 'مستويات صعوبة التقييم (AI Mode)' : 'AI Evaluation Difficulty',
+            aiModeSubtitle: isAr ? 'توزيع مستويات الصرامة المختارة للتقييمات.' : 'Distribution of selected strictness levels for AI evaluations.'
         };
 
         const selectedJobTitle = this.filters.job_title || 'all';
@@ -494,6 +496,16 @@ export class DashboardSection {
 
                     <section class="card">
                         <div class="card-title">
+                            <h3>${labels.aiModeTitle}</h3>
+                            <p>${labels.aiModeSubtitle}</p>
+                        </div>
+                        <div class="chart-wrapper">
+                            ${!quality_summary?.ai_mode_counts || Object.keys(quality_summary.ai_mode_counts).length === 0 ? this.renderEmptyState(isAr ? 'لا توجد بيانات لمستويات الصعوبة.' : 'No AI mode data available for this filter.') : '<canvas id="aiModeChart" class="chart-canvas"></canvas>'}
+                        </div>
+                    </section>
+
+                    <section class="card">
+                        <div class="card-title">
                             <h3>${labels.skillsTitle}</h3>
                             <p>${labels.skillsSubtitle}</p>
                         </div>
@@ -577,31 +589,56 @@ export class DashboardSection {
         this.renderScoreDistributionChart();
         this.renderQualityMatrix();
         this.renderConfidenceDistributionChart();
+        this.renderAIModeChart();
         this.renderDepartmentChart();
         this.renderReviewRiskChart();
         this.renderPulseOverviewChart();
+
         this.renderSkillsGapChart();
         this.renderStatusBarChart();
         this.bindFilterEvents();
     }
 
     bindFilterEvents() {
-        document.getElementById('jobTitleFilter')?.addEventListener('change', async (event) => {
-            this.filters.job_title = event.target.value;
-            await this.applyFilters();
-        });
-        document.getElementById('departmentFilter')?.addEventListener('change', async (event) => {
-            this.filters.department = event.target.value;
-            await this.applyFilters();
-        });
-        document.getElementById('fromDateFilter')?.addEventListener('change', async (event) => {
-            this.filters.from_date = event.target.value;
-            await this.applyFilters();
-        });
-        document.getElementById('toDateFilter')?.addEventListener('change', async (event) => {
-            this.filters.to_date = event.target.value;
-            await this.applyFilters();
-        });
+        const jobFilter = document.getElementById('jobTitleFilter');
+        if (jobFilter) {
+            jobFilter.removeEventListener('change', jobFilter._changeHandler);
+            jobFilter._changeHandler = async (event) => {
+                this.filters.job_title = event.target.value;
+                await this.applyFilters();
+            };
+            jobFilter.addEventListener('change', jobFilter._changeHandler);
+        }
+
+        const deptFilter = document.getElementById('departmentFilter');
+        if (deptFilter) {
+            deptFilter.removeEventListener('change', deptFilter._changeHandler);
+            deptFilter._changeHandler = async (event) => {
+                this.filters.department = event.target.value;
+                await this.applyFilters();
+            };
+            deptFilter.addEventListener('change', deptFilter._changeHandler);
+        }
+
+        const fromDateFilter = document.getElementById('fromDateFilter');
+        if (fromDateFilter) {
+            fromDateFilter.removeEventListener('change', fromDateFilter._changeHandler);
+            fromDateFilter._changeHandler = async (event) => {
+                this.filters.from_date = event.target.value;
+                await this.applyFilters();
+            };
+            fromDateFilter.addEventListener('change', fromDateFilter._changeHandler);
+        }
+
+        const toDateFilter = document.getElementById('toDateFilter');
+        if (toDateFilter) {
+            toDateFilter.removeEventListener('change', toDateFilter._changeHandler);
+            toDateFilter._changeHandler = async (event) => {
+                this.filters.to_date = event.target.value;
+                await this.applyFilters();
+            };
+            toDateFilter.addEventListener('change', toDateFilter._changeHandler);
+        }
     }
 
     async applyFilters() {
@@ -953,6 +990,65 @@ export class DashboardSection {
                 maintainAspectRatio: false,
                 plugins: { legend: { display: false } },
                 scales: { x: { beginAtZero: true, grid: { color: this.chartColors.border }, ticks: { precision: 0, color: this.chartColors.muted } }, y: { grid: { display: false }, ticks: { color: this.chartColors.text } } }
+            }
+        });
+        this.charts.push(chart);
+    }
+
+    renderAIModeChart() {
+        const ctx = document.getElementById('aiModeChart')?.getContext('2d');
+        if (!ctx) return;
+
+        const counts = this.metrics?.quality_summary?.ai_mode_counts || {};
+        const modes = ['very_strict', 'strict', 'normal', 'lenient'];
+        const isAr = getLang() === 'ar';
+
+        const labelMap = {
+            very_strict: isAr ? 'صعب جداً' : 'Very Strict',
+            strict:      isAr ? 'صعب'     : 'Strict',
+            normal:      isAr ? 'متوسط'   : 'Normal',
+            lenient:     isAr ? 'سهل'     : 'Lenient'
+        };
+
+        // Only include modes that have data
+        const activeModes = modes.filter(m => counts[m] > 0);
+        if (!activeModes.length) return;
+
+        const labels = activeModes.map(m => labelMap[m]);
+        const data   = activeModes.map(m => counts[m]);
+        const colors = { very_strict: '#7C3AED', strict: '#6366F1', normal: '#22C55E', lenient: '#F59E0B' };
+        const bgColors = activeModes.map(m => colors[m]);
+
+        const chart = new Chart(ctx, {
+            type: 'doughnut',
+            data: {
+                labels,
+                datasets: [{
+                    data,
+                    backgroundColor: bgColors,
+                    borderColor: '#ffffff',
+                    borderWidth: 2
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                cutout: '70%',
+                plugins: {
+                    legend: {
+                        position: 'bottom',
+                        labels: { usePointStyle: true, boxWidth: 10, color: this.chartColors.muted }
+                    },
+                    tooltip: {
+                        callbacks: {
+                            label(context) {
+                                const total = context.dataset.data.reduce((a, b) => a + b, 0);
+                                const pct = total ? Math.round((context.parsed / total) * 100) : 0;
+                                return `${context.label}: ${context.parsed} (${pct}%)`;
+                            }
+                        }
+                    }
+                }
             }
         });
         this.charts.push(chart);

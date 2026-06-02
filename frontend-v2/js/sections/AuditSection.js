@@ -1,4 +1,4 @@
-import { t, getLang } from '../core/i18n.js';
+import { getLang } from '../core/i18n.js';
 import { api } from '../core/api.js';
 import { Toast } from '../components/Toast.js';
 
@@ -7,17 +7,18 @@ export class AuditSection {
         this.logs = [];
         this.filteredLogs = [];
         
-        // Pagination
-        this.page = 1;
-        this.pageSize = 25;
+        // Date Filters
+        this.startDate = '';
+        this.endDate = '';
+        
         this.totalCount = 0;
-        this.totalPages = 1;
         this.isLoading = false;
         
-        // Filters
         this.searchQuery = '';
         this.actionFilter = 'all';
         this.resourceFilter = 'all';
+        this.timeRangeFilter = 'all';
+        this.userFilter = '';
         this._searchTimeout = null;
         
         // Available filter options (populated from data)
@@ -30,32 +31,57 @@ export class AuditSection {
         if (this.isLoading) return;
         try {
             this.isLoading = true;
-            const params = {
-                limit: this.pageSize,
-                skip: (this.page - 1) * this.pageSize,
-            };
+            const params = { limit: 1000 };
 
             if (this.searchQuery.trim()) params.search = this.searchQuery.trim();
             if (this.actionFilter !== 'all') params.action = this.actionFilter;
             if (this.resourceFilter !== 'all') params.resource_type = this.resourceFilter;
+            if (this.userFilter) params.user_email = this.userFilter;
+            
+            // Handle timeRangeFilter
+            let calculatedStartDate = this.startDate;
+            let calculatedEndDate = this.endDate;
+
+            if (this.timeRangeFilter !== 'all') {
+                const now = new Date();
+                const past = new Date();
+                switch(this.timeRangeFilter) {
+                    case '1h': past.setHours(now.getHours() - 1); break;
+                    case '12h': past.setHours(now.getHours() - 12); break;
+                    case '1d': past.setDate(now.getDate() - 1); break;
+                    case '3d': past.setDate(now.getDate() - 3); break;
+                    case '1w': past.setDate(now.getDate() - 7); break;
+                    case '1m': past.setMonth(now.getMonth() - 1); break;
+                }
+                calculatedStartDate = past.toISOString();
+                calculatedEndDate = now.toISOString();
+            }
+
+            // Format dates slightly or send directly if valid ISO
+            if (calculatedStartDate) params.start_date = new Date(calculatedStartDate).toISOString();
+            if (calculatedEndDate) params.end_date = new Date(calculatedEndDate).toISOString();
 
             const data = await api.get('/audit/logs', params);
             
-            if (Array.isArray(data)) {
+            if (data && typeof data === 'object') {
+                this.logs = data.items || [];
+                this.totalCount = data.total_count || this.logs.length;
+            } else if (Array.isArray(data)) {
                 this.logs = data;
-                this.totalCount = data.length;
+                this.totalCount = this.logs.length;
             } else {
-                this.logs = data.items || data.logs || [];
-                this.totalCount = data.total_count ?? data.total ?? this.logs.length;
+                this.logs = [];
+                this.totalCount = 0;
             }
 
-            this.totalPages = Math.max(1, Math.ceil(this.totalCount / this.pageSize));
             this.filteredLogs = this.logs;
 
-            // Collect unique actions & resources for filter dropdowns if not already populated
-            if (this.availableActions.length === 0 && this.logs.length > 0) {
-                this.availableActions = [...new Set(this.logs.map(l => l.action).filter(Boolean))].sort();
-                this.availableResources = [...new Set(this.logs.map(l => l.resource_type).filter(Boolean))].sort();
+            // Collect unique actions & resources for filter dropdowns (always merge new values)
+            if (this.logs.length > 0) {
+                const newActions = this.logs.map(l => l.action).filter(Boolean);
+                const newResources = this.logs.map(l => l.resource_type).filter(Boolean);
+                this.availableActions = [...new Set([...this.availableActions, ...newActions])].sort();
+                this.availableResources = [...new Set([...this.availableResources, ...newResources])].sort();
             }
         } catch (error) {
             console.error('AuditSection fetchData error:', error);
@@ -98,12 +124,43 @@ export class AuditSection {
     }
 
     _formatDetails(details) {
-        if (!details) return '—';
+        if (!details) return '<span style="color:var(--text-muted);">—</span>';
         try {
             const obj = typeof details === 'string' ? JSON.parse(details) : details;
-            return Object.keys(obj).map(k => `${k}: ${obj[k]}`).join(', ');
+            if (typeof obj !== 'object' || obj === null) {
+                return `<span style="color:var(--text-muted); font-size:0.82rem;">${String(details).replace(/^[A-Za-z]+Enum\./, '')}</span>`;
+            }
+            const entries = Object.entries(obj).filter(([, v]) => v !== null && v !== undefined && v !== '');
+            if (entries.length === 0) return '<span style="color:var(--text-muted);">—</span>';
+            return entries.map(([k, v]) => {
+                const label = k.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+                let valHtml = '';
+                if (typeof v === 'object' && v !== null) {
+                    const subEntries = Object.entries(v);
+                    if (subEntries.length === 0) {
+                        valHtml = `<span style="color:var(--text-muted);">—</span>`;
+                    } else {
+                        valHtml = `<div style="margin-top:0.3rem; padding-inline-start:0.6rem; border-inline-start:2px solid var(--border-color); display:flex; flex-direction:column; gap:0.2rem;">
+                            ${subEntries.map(([subK, subV]) => {
+                                const subVal = typeof subV === 'object' ? JSON.stringify(subV) : String(subV).replace(/^[A-Za-z]+Enum\./, '');
+                                return `<div style="font-size:0.78rem; line-height:1.3;">
+                                    <span style="color:var(--text-muted); font-weight:500;">${subK}:</span> 
+                                    <span style="color:var(--text-color);">${subVal}</span>
+                                </div>`;
+                            }).join('')}
+                        </div>`;
+                    }
+                } else {
+                    const strVal = String(v).replace(/^[A-Za-z]+Enum\./, '');
+                    valHtml = `<span style="color:var(--text-color); word-break:break-word;">${strVal}</span>`;
+                }
+                return `<div style="display:flex; flex-direction:column; gap:0.1rem; margin-bottom:0.5rem; font-size:0.82rem; line-height:1.4;">
+                    <span style="color:var(--text-muted); font-weight:600;">${label}:</span>
+                    ${valHtml}
+                </div>`;
+            }).join('');
         } catch {
-            return String(details);
+            return `<span style="color:var(--text-muted); font-size:0.82rem;">${String(details).replace(/^[A-Za-z]+Enum\./, '')}</span>`;
         }
     }
 
@@ -221,7 +278,7 @@ export class AuditSection {
             action: isAr ? "الإجراء" : "Action",
             resource: isAr ? "المورد" : "Resource",
             details: isAr ? "التفاصيل" : "Details",
-            ip: isAr ? "IP" : "IP Address",
+            ip: isAr ? "IP" : "IP Address",  // kept for PDF export
             timestamp: isAr ? "الوقت" : "Timestamp",
             search: isAr ? "ابحث في السجلات..." : "Search logs...",
             filterAction: isAr ? "كل الإجراءات" : "All Actions",
@@ -238,21 +295,14 @@ export class AuditSection {
             page: isAr ? "صفحة" : "Page",
         };
 
-        // ── Toolbar Filter Options ────────────────────────────────────────────
-        const actionOptions = this.availableActions.map(a =>
-            `<option value="${a}" ${this.actionFilter === a ? 'selected' : ''}>${a}</option>`
-        ).join('');
+        const actionOptions = this.availableActions.map(a => `<option value="${a}" ${this.actionFilter === a ? 'selected' : ''}>${a}</option>`).join('');
+        const resourceOptions = this.availableResources.map(r => `<option value="${r}" ${this.resourceFilter === r ? 'selected' : ''}>${r}</option>`).join('');
 
-        const resourceOptions = this.availableResources.map(r =>
-            `<option value="${r}" ${this.resourceFilter === r ? 'selected' : ''}>${r}</option>`
-        ).join('');
-
-        // ── Table Rows ────────────────────────────────────────────────────────
         let tableRows = '';
         if (this.isLoading) {
             tableRows = Array(5).fill(0).map(() => `
                 <tr>
-                    ${Array(7).fill(0).map(() => `
+                    ${Array(6).fill(0).map(() => `
                         <td style="padding:0.9rem;">
                             <div style="height:14px; background:linear-gradient(90deg,var(--bg-secondary) 25%,rgba(0,0,0,0.04) 50%,var(--bg-secondary) 75%); background-size:200% 100%; animation:shimmer 1.5s infinite; border-radius:4px;"></div>
                         </td>
@@ -262,10 +312,10 @@ export class AuditSection {
         } else if (this.filteredLogs.length === 0) {
             tableRows = `
                 <tr>
-                    <td colspan="7" style="text-align:center; padding:4rem 2rem; color:var(--text-muted);">
+                    <td colspan="6" style="text-align:center; padding:4rem 2rem; color:var(--text-muted);">
                         <i class="fas fa-clipboard-list" style="font-size:2.5rem; display:block; margin-bottom:1rem; opacity:0.25;"></i>
                         <div style="font-size:1rem; font-weight:500;">${labels.noLogs}</div>
-                        ${this.searchQuery || this.actionFilter !== 'all' || this.resourceFilter !== 'all'
+                        ${this.searchQuery || this.actionFilter !== 'all' || this.resourceFilter !== 'all' || this.startDate || this.endDate
                             ? `<div style="font-size:0.85rem; margin-top:0.4rem; opacity:0.7;">${isAr ? 'جرب تغيير معايير البحث أو الفلترة' : 'Try changing your search or filter criteria'}</div>`
                             : ''}
                     </td>
@@ -280,9 +330,6 @@ export class AuditSection {
                     : '';
                 
                 const resourceLabel = log.resource_type || '—';
-                const resourceIdBadge = log.resource_id
-                    ? `<span style="background:rgba(0,0,0,0.06); padding:0.1rem 0.4rem; border-radius:4px; font-size:0.75rem; margin-inline-start:0.35rem; color:var(--text-muted);">#${log.resource_id}</span>`
-                    : '';
 
                 const { bg, color, icon } = this._getActionStyle(log.action);
                 const rowBg = idx % 2 === 0 ? 'transparent' : 'rgba(0,0,0,0.012)';
@@ -310,13 +357,10 @@ export class AuditSection {
                             </span>
                         </td>
                         <td style="padding:0.85rem 1rem; font-size:0.88rem;">
-                            <span style="color:var(--text-color);">${resourceLabel}</span>${resourceIdBadge}
+                            <span style="color:var(--text-color);">${resourceLabel}</span>
                         </td>
-                        <td style="padding:0.85rem 1rem; max-width:220px;">
+                        <td style="padding:0.85rem 1rem; max-width:280px;">
                             ${this._formatDetails(log.details)}
-                        </td>
-                        <td style="padding:0.85rem 1rem;">
-                            <span style="font-size:0.82rem; color:var(--text-muted); font-family:monospace; white-space:nowrap;">${log.ip_address || '—'}</span>
                         </td>
                         <td style="padding:0.85rem 1rem;">
                             <span style="font-size:0.82rem; color:var(--text-muted); white-space:nowrap;">${this._formatTimestamp(log.created_at)}</span>
@@ -325,47 +369,6 @@ export class AuditSection {
                 `;
             }).join('');
         }
-
-        // ── Pagination Generation ─────────────────────────────────────────────
-        const startEntry = this.filteredLogs.length === 0 ? 0 : (this.page - 1) * this.pageSize + 1;
-        const endEntry = Math.min(this.page * this.pageSize, this.totalCount);
-        
-        const pageButtons = (() => {
-            const btns = [];
-            const range = 2;
-            for (let p = 1; p <= this.totalPages; p++) {
-                if (p === 1 || p === this.totalPages || (p >= this.page - range && p <= this.page + range)) {
-                    btns.push({ page: p, label: String(p), active: p === this.page });
-                } else if (btns.length && btns[btns.length - 1].label !== '...') {
-                    btns.push({ page: null, label: '...', active: false });
-                }
-            }
-            return btns;
-        })();
-
-        const paginationHtml = this.totalPages > 1 ? `
-            <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.75rem; padding:1rem 1.5rem; border-top:1px solid var(--border-color); background:var(--bg-secondary);">
-                <span style="font-size:0.85rem; color:var(--text-muted);">
-                    ${labels.showing} <strong>${startEntry}–${endEntry}</strong> ${labels.of} <strong>${this.totalCount}</strong> ${labels.entries}
-                </span>
-                <div style="display:flex; gap:0.3rem; align-items:center; flex-wrap:wrap;">
-                    <button id="audit-prev-btn" class="audit-page-btn" data-page="${this.page - 1}" ${this.page <= 1 ? 'disabled' : ''}>
-                        <i class="fas fa-chevron-${isAr ? 'right' : 'left'}"></i> ${labels.prev}
-                    </button>
-                    ${pageButtons.map(b => b.label === '...'
-                        ? `<span style="padding:0.3rem 0.5rem; color:var(--text-muted);">…</span>`
-                        : `<button class="audit-page-btn ${b.active ? 'active' : ''}" data-page="${b.page}">${b.label}</button>`
-                    ).join('')}
-                    <button id="audit-next-btn" class="audit-page-btn" data-page="${this.page + 1}" ${this.page >= this.totalPages ? 'disabled' : ''}>
-                        ${labels.next} <i class="fas fa-chevron-${isAr ? 'left' : 'right'}"></i>
-                    </button>
-                </div>
-            </div>
-        ` : (this.filteredLogs.length > 0 ? `
-            <div style="padding:0.75rem 1.5rem; border-top:1px solid var(--border-color); background:var(--bg-secondary); font-size:0.85rem; color:var(--text-muted); text-align:${isAr ? 'right' : 'left'};">
-                ${this.totalCount} ${labels.entries}
-            </div>
-        ` : '');
 
         return `
             <style>
@@ -389,31 +392,6 @@ export class AuditSection {
                     outline: none;
                     border-color: var(--primary-color);
                     box-shadow: 0 0 0 3px rgba(var(--primary-color-rgb,79,70,229), 0.12);
-                }
-                .audit-page-btn {
-                    padding: 0.35rem 0.7 flex;
-                    border-radius: 6px;
-                    border: 1px solid var(--border-color);
-                    background: var(--bg-primary);
-                    color: var(--text-color);
-                    font-size: 0.82rem;
-                    cursor: pointer;
-                    transition: all 0.15s;
-                    display: inline-flex; align-items: center; gap: 0.3rem;
-                }
-                .audit-page-btn:hover:not(:disabled) {
-                    border-color: var(--primary-color);
-                    color: var(--primary-color);
-                }
-                .audit-page-btn.active {
-                    background: var(--primary-color);
-                    border-color: var(--primary-color);
-                    color: #fff;
-                    font-weight: 600;
-                }
-                .audit-page-btn:disabled {
-                    opacity: 0.35;
-                    cursor: not-allowed;
                 }
                 .audit-table thead th {
                     background: var(--bg-secondary);
@@ -485,15 +463,6 @@ export class AuditSection {
                         <div style="font-size:0.78rem; color:var(--text-muted); margin-top:0.15rem;">${isAr ? 'أنواع الموارد' : 'Resource Types'}</div>
                     </div>
                 </div>
-                <div class="audit-stat-card">
-                    <div style="width:38px; height:38px; border-radius:9px; background:rgba(59,130,246,0.1); display:flex; align-items:center; justify-content:center; flex-shrink:0;">
-                        <i class="fas fa-file-alt" style="color:#3b82f6;"></i>
-                    </div>
-                    <div>
-                        <div style="font-size:1.4rem; font-weight:800; line-height:1;">${labels.page} ${this.page}/${this.totalPages}</div>
-                        <div style="font-size:0.78rem; color:var(--text-muted); margin-top:0.15rem;">${isAr ? 'الصفحة الحالية' : 'Current Page'}</div>
-                    </div>
-                </div>
             </div>
 
             <div class="card" style="border-radius:12px; overflow:hidden; box-shadow:0 4px 20px rgba(0,0,0,0.04); background:var(--bg-card); border:1px solid var(--border-color);">
@@ -510,17 +479,40 @@ export class AuditSection {
                             style="padding-${isAr ? 'right' : 'left'}:2.25rem; width:100%; box-sizing:border-box;"
                         />
                     </div>
-                    <select id="audit-action-filter" class="audit-toolbar-input" style="min-width:160px;">
+                    <div style="position:relative; min-width:180px;">
+                        <i class="fas fa-envelope" style="position:absolute; ${isAr ? 'right:0.75rem' : 'left:0.75rem'}; top:50%; transform:translateY(-50%); color:var(--text-muted); font-size:0.85rem; pointer-events:none;"></i>
+                        <input
+                            id="audit-user-filter"
+                            type="text"
+                            class="audit-toolbar-input"
+                            placeholder="${isAr ? 'البريد الإلكتروني' : 'User Email'}"
+                            value="${this.userFilter}"
+                            style="padding-${isAr ? 'right' : 'left'}:2.25rem; width:100%; box-sizing:border-box;"
+                        />
+                    </div>
+                    <select id="audit-action-filter" class="audit-toolbar-input" style="min-width:140px;">
                         <option value="all">${labels.filterAction}</option>
                         ${actionOptions}
                     </select>
-                    <select id="audit-resource-filter" class="audit-toolbar-input" style="min-width:160px;">
+                    <select id="audit-resource-filter" class="audit-toolbar-input" style="min-width:140px;">
                         <option value="all">${labels.filterResource}</option>
                         ${resourceOptions}
                     </select>
-                    <select id="audit-pagesize" class="audit-toolbar-input" style="min-width:110px;">
-                        ${[10, 25, 50, 100].map(n => `<option value="${n}" ${this.pageSize === n ? 'selected' : ''}>${n} / ${isAr ? 'صفحة' : 'page'}</option>`).join('')}
+                    <select id="audit-time-range-filter" class="audit-toolbar-input" style="min-width:140px;">
+                        <option value="all" ${this.timeRangeFilter === 'all' ? 'selected' : ''}>${isAr ? 'كل الأوقات' : 'All Time'}</option>
+                        <option value="1h" ${this.timeRangeFilter === '1h' ? 'selected' : ''}>${isAr ? 'آخر ساعة' : 'Last Hour'}</option>
+                        <option value="12h" ${this.timeRangeFilter === '12h' ? 'selected' : ''}>${isAr ? 'آخر 12 ساعة' : 'Last 12 Hours'}</option>
+                        <option value="1d" ${this.timeRangeFilter === '1d' ? 'selected' : ''}>${isAr ? 'آخر يوم' : 'Last Day'}</option>
+                        <option value="3d" ${this.timeRangeFilter === '3d' ? 'selected' : ''}>${isAr ? 'آخر 3 أيام' : 'Last 3 Days'}</option>
+                        <option value="1w" ${this.timeRangeFilter === '1w' ? 'selected' : ''}>${isAr ? 'آخر أسبوع' : 'Last Week'}</option>
+                        <option value="1m" ${this.timeRangeFilter === '1m' ? 'selected' : ''}>${isAr ? 'آخر شهر' : 'Last Month'}</option>
                     </select>
+                    <div style="display:flex; align-items:center; gap:0.5rem; background:var(--bg-primary); border:1px solid var(--border-color); padding:0.3rem 0.6rem; border-radius:7px; ${this.timeRangeFilter !== 'all' ? 'opacity:0.5; pointer-events:none;' : ''}">
+                        <i class="far fa-calendar-alt" style="color:var(--text-muted);"></i>
+                        <input type="datetime-local" id="audit-start-date" class="audit-toolbar-input" style="border:none; padding:0.3rem; font-size:0.8rem; background:transparent; width:130px;" title="${labels.fromDate}" value="${this.startDate}">
+                        <span style="color:var(--text-muted); font-size:0.8rem;">—</span>
+                        <input type="datetime-local" id="audit-end-date" class="audit-toolbar-input" style="border:none; padding:0.3rem; font-size:0.8rem; background:transparent; width:130px;" title="${labels.toDate}" value="${this.endDate}">
+                    </div>
                 </div>
 
                 <div class="table-responsive" style="overflow-x:auto; width:100%;">
@@ -530,9 +522,8 @@ export class AuditSection {
                                 <th style="width:70px;">${labels.logId}</th>
                                 <th style="min-width:160px;">${labels.user}</th>
                                 <th style="min-width:140px;">${labels.action}</th>
-                                <th style="min-width:140px;">${labels.resource}</th>
-                                <th style="min-width:200px;">${labels.details}</th>
-                                <th style="min-width:120px;">${labels.ip}</th>
+                                <th style="min-width:120px;">${labels.resource}</th>
+                                <th style="min-width:220px;">${labels.details}</th>
                                 <th style="min-width:170px;">${labels.timestamp}</th>
                             </tr>
                         </thead>
@@ -540,10 +531,6 @@ export class AuditSection {
                             ${tableRows}
                         </tbody>
                     </table>
-                </div>
-
-                <div id="audit-pagination">
-                    ${paginationHtml}
                 </div>
             </div>
         `;
@@ -554,29 +541,41 @@ export class AuditSection {
         // Refresh Button
         const refreshBtn = document.getElementById('audit-refresh-btn');
         if (refreshBtn) {
-            refreshBtn.addEventListener('click', async () => {
+            // إزالة المستمع القديم قبل إضافة جديد
+            if (refreshBtn._clickHandler) {
+                refreshBtn.removeEventListener('click', refreshBtn._clickHandler);
+            }
+            refreshBtn._clickHandler = async () => {
                 const icon = document.getElementById('audit-refresh-icon');
                 if (icon) icon.classList.add('fa-spin');
-                this.page = 1;
                 await this.fetchData();
                 this._updateDOM();
-            });
+            };
+            refreshBtn.addEventListener('click', refreshBtn._clickHandler);
         }
 
         // PDF Export Button (Updated to trigger PDF generation)
         const exportBtn = document.getElementById('audit-export-btn');
         if (exportBtn) {
-            exportBtn.addEventListener('click', () => this._exportPDF());
+            // إزالة المستمع القديم قبل إضافة جديد
+            if (exportBtn._clickHandler) {
+                exportBtn.removeEventListener('click', exportBtn._clickHandler);
+            }
+            exportBtn._clickHandler = () => this._exportPDF();
+            exportBtn.addEventListener('click', exportBtn._clickHandler);
         }
 
         // Search Input with Debounce
         const searchInput = document.getElementById('audit-search');
         if (searchInput) {
-            searchInput.addEventListener('input', (e) => {
+            // إزالة المستمع القديم قبل إضافة جديد
+            if (searchInput._inputHandler) {
+                searchInput.removeEventListener('input', searchInput._inputHandler);
+            }
+            searchInput._inputHandler = (e) => {
                 clearTimeout(this._searchTimeout);
                 this.searchQuery = e.target.value;
                 this._searchTimeout = setTimeout(async () => {
-                    this.page = 1;
                     await this.fetchData();
                     this._updateDOM();
                     
@@ -587,67 +586,115 @@ export class AuditSection {
                         newSearch.setSelectionRange(this.searchQuery.length, this.searchQuery.length);
                     }
                 }, 300);
-            });
+            };
+            searchInput.addEventListener('input', searchInput._inputHandler);
 
-            searchInput.addEventListener('search', async (e) => {
+            // إزالة المستمع القديم قبل إضافة جديد
+            if (searchInput._searchHandler) {
+                searchInput.removeEventListener('search', searchInput._searchHandler);
+            }
+            searchInput._searchHandler = async (e) => {
                 this.searchQuery = e.target.value;
-                this.page = 1;
                 await this.fetchData();
                 this._updateDOM();
-            });
+            };
+            searchInput.addEventListener('search', searchInput._searchHandler);
         }
 
-        // Action Filter Select
+        // Date Range Filters
+        const startDateInput = document.getElementById('audit-start-date');
+        const endDateInput = document.getElementById('audit-end-date');
+        
+        const handleDateChange = async () => {
+            this.startDate = startDateInput ? startDateInput.value : '';
+            this.endDate = endDateInput ? endDateInput.value : '';
+            this.timeRangeFilter = 'all'; // custom date overwrites time range
+            await this.fetchData();
+            this._updateDOM();
+        };
+
+        if (startDateInput) {
+            // إزالة المستمع القديم قبل إضافة جديد
+            if (startDateInput._changeHandler) {
+                startDateInput.removeEventListener('change', startDateInput._changeHandler);
+            }
+            startDateInput._changeHandler = handleDateChange;
+            startDateInput.addEventListener('change', startDateInput._changeHandler);
+        }
+        if (endDateInput) {
+            // إزالة المستمع القديم قبل إضافة جديد
+            if (endDateInput._changeHandler) {
+                endDateInput.removeEventListener('change', endDateInput._changeHandler);
+            }
+            endDateInput._changeHandler = handleDateChange;
+            endDateInput.addEventListener('change', endDateInput._changeHandler);
+        }
+
+        // Action and Resource Filters
         const actionFilter = document.getElementById('audit-action-filter');
-        if (actionFilter) {
-            actionFilter.addEventListener('change', async (e) => {
-                this.actionFilter = e.target.value;
-                this.page = 1;
-                await this.fetchData();
-                this._updateDOM();
-            });
-        }
-
-        // Resource Filter Select
         const resourceFilter = document.getElementById('audit-resource-filter');
+        const timeRangeFilter = document.getElementById('audit-time-range-filter');
+        const userFilter = document.getElementById('audit-user-filter');
+
+        const handleFilterChange = async (e) => {
+            if (actionFilter) this.actionFilter = actionFilter.value;
+            if (resourceFilter) this.resourceFilter = resourceFilter.value;
+            if (timeRangeFilter) this.timeRangeFilter = timeRangeFilter.value;
+            if (userFilter) this.userFilter = userFilter.value;
+            
+            await this.fetchData();
+            this._updateDOM();
+        };
+
+        if (actionFilter) {
+            // إزالة المستمع القديم قبل إضافة جديد
+            if (actionFilter._changeHandler) {
+                actionFilter.removeEventListener('change', actionFilter._changeHandler);
+            }
+            actionFilter._changeHandler = handleFilterChange;
+            actionFilter.addEventListener('change', actionFilter._changeHandler);
+        }
         if (resourceFilter) {
-            resourceFilter.addEventListener('change', async (e) => {
-                this.resourceFilter = e.target.value;
-                this.page = 1;
-                await this.fetchData();
-                this._updateDOM();
-            });
+            // إزالة المستمع القديم قبل إضافة جديد
+            if (resourceFilter._changeHandler) {
+                resourceFilter.removeEventListener('change', resourceFilter._changeHandler);
+            }
+            resourceFilter._changeHandler = handleFilterChange;
+            resourceFilter.addEventListener('change', resourceFilter._changeHandler);
         }
-
-        // Page Size Select
-        const pageSizeSelect = document.getElementById('audit-pagesize');
-        if (pageSizeSelect) {
-            pageSizeSelect.addEventListener('change', async (e) => {
-                this.pageSize = parseInt(e.target.value, 10);
-                this.page = 1;
-                await this.fetchData();
-                this._updateDOM();
-            });
+        if (timeRangeFilter) {
+            // إزالة المستمع القديم قبل إضافة جديد
+            if (timeRangeFilter._changeHandler) {
+                timeRangeFilter.removeEventListener('change', timeRangeFilter._changeHandler);
+            }
+            timeRangeFilter._changeHandler = handleFilterChange;
+            timeRangeFilter.addEventListener('change', timeRangeFilter._changeHandler);
         }
+        if (userFilter) {
+            // إزالة المستمعين القدماء قبل إضافة جديد
+            if (userFilter._changeHandler) {
+                userFilter.removeEventListener('change', userFilter._changeHandler);
+            }
+            userFilter._changeHandler = handleFilterChange;
+            userFilter.addEventListener('change', userFilter._changeHandler);
 
-        // Pagination Click Delegation
-        const paginationContainer = document.getElementById('audit-pagination');
-        if (paginationContainer) {
-            paginationContainer.addEventListener('click', async (e) => {
-                const btn = e.target.closest('.audit-page-btn');
-                if (!btn || btn.disabled || btn.classList.contains('active')) return;
+            if (userFilter._searchHandler) {
+                userFilter.removeEventListener('search', userFilter._searchHandler);
+            }
+            userFilter._searchHandler = handleFilterChange;
+            userFilter.addEventListener('search', userFilter._searchHandler);
 
-                const targetPage = parseInt(btn.getAttribute('data-page'), 10);
-                if (targetPage && targetPage >= 1 && targetPage <= this.totalPages) {
-                    this.page = targetPage;
+            if (userFilter._keyupHandler) {
+                userFilter.removeEventListener('keyup', userFilter._keyupHandler);
+            }
+            userFilter._keyupHandler = async (e) => {
+                if (e.key === 'Enter') {
+                    this.userFilter = userFilter.value;
                     await this.fetchData();
                     this._updateDOM();
-                    
-                    // Scroll back to the top of table smoothly if needed
-                    const tableCard = document.querySelector('.card');
-                    if (tableCard) tableCard.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
                 }
-            });
+            };
+            userFilter.addEventListener('keyup', userFilter._keyupHandler);
         }
     }
 

@@ -15,27 +15,36 @@ export class EvaluationDetailSection {
     async fetchData() {
         this.isLoading = true;
         try {
-            // Fetch session and evaluation in parallel to improve performance
-            const [sessionReq, evalReq] = await Promise.allSettled([
-                api.get(`/sessions/${this.sessionId}`),
-                api.get(`/evaluations/session/${this.sessionId}`)
-            ]);
-
-            if (sessionReq.status === 'fulfilled') {
-                this.session = sessionReq.value;
+            this.session = await api.get(`/sessions/${this.sessionId}`);
+            try {
+                const appData = await api.get(`/applications/${this.session.application_id}`);
+                if (appData && appData.candidate_id) {
+                    this.candidate = await api.get(`/candidates/${appData.candidate_id}`);
+                }
+            } catch (e) {
+                console.log("Failed to fetch candidate details.", e);
             }
 
-            if (evalReq.status === 'fulfilled' && evalReq.value && evalReq.value.id) {
-                this.evaluation = evalReq.value;
-                // Fetch optional extra insights/questions if available
+            if (this.session.pipeline_status !== 'completed') {
+                this.evaluation = null;
+                this.insights = null;
+                return;
+            }
+
+            try {
+                this.evaluation = await api.get(`/evaluations/session/${this.sessionId}`, null, { silent: true });
+            } catch {
+                this.evaluation = null;
+                this.insights = null;
+                return;
+            }
+
+            if (this.evaluation?.id) {
                 try {
-                    this.insights = await api.get(`/evaluations/${this.evaluation.id}/insights`);
-                } catch (e) {
-                    console.log("No extra insights endpoint match, fallback to evaluation fields.");
+                    this.insights = await api.get(`/evaluations/${this.evaluation.id}/insights`, null, { silent: true });
+                } catch {
                     this.insights = null;
                 }
-            } else {
-                this.evaluation = null;
             }
         } catch (error) {
             console.error('Evaluation fetch error:', error);
@@ -242,7 +251,7 @@ export class EvaluationDetailSection {
                             <span style="color:var(--primary-color); font-size:1.05rem; font-weight:800;">${score}<span style="font-size:0.75rem; color:var(--text-muted);">/100</span></span>
                         </div>
                         <div style="width:100%; height:8px; background:var(--bg-secondary, #e2e8f0); border-radius:4px; overflow:hidden; margin-bottom:0.75rem;">
-                            <div style="width:0; height:100%; background:linear-gradient(90deg, var(--primary-color), #00d4a0); border-radius:4px; animation: fillBar 1s ease-out ${delay}s forwards;" data-width="${score}%"></div>
+                            <div style="width:0; height:100%; background:linear-gradient(90deg, var(--primary-color), #00d4a0); border-radius:4px; animation: fillBar 1s ease-out ${delay}s forwards; --target-width: ${score}%;" data-width="${score}%"></div>
                         </div>
                         ${reasoning ? `<p style="font-size:0.85rem; color:var(--text-muted); margin:0; line-height:1.6;">${reasoning}</p>` : ''}
                     </div>
@@ -282,7 +291,7 @@ export class EvaluationDetailSection {
             <style>
                 @keyframes fillBar {
                     from { width: 0; }
-                    to { width: attr(data-width); } /* Handled via script or direct inline style override if attr unsupported, fallback below */
+                    to { width: var(--target-width); }
                 }
                 
                 /* Modern Thin Scrollbar for internal elements */
@@ -358,6 +367,37 @@ export class EvaluationDetailSection {
                 </div>
             </div>
             
+            ${(() => {
+                if (!this.candidate) return '';
+                const c = this.candidate;
+                const phoneHtml = c.phone ? `<span style="background:var(--bg-secondary); padding:0.3rem 0.6rem; border-radius:6px; border:1px solid var(--border-color); display:inline-flex; align-items:center; gap:0.4rem;"><i class="fas fa-phone" style="color:var(--text-muted);"></i> <strong>${c.phone}</strong></span>` : '';
+                const linkedInHtml = c.linkedin_url ? `<span style="background:var(--bg-secondary); padding:0.3rem 0.6rem; border-radius:6px; border:1px solid var(--border-color); display:inline-flex; align-items:center; gap:0.4rem;"><i class="fab fa-linkedin" style="color:#0a66c2;"></i> <a href="${c.linkedin_url}" target="_blank" style="color:var(--primary-color); text-decoration:none;"><strong>LinkedIn</strong></a></span>` : '';
+                const githubHtml = c.github_url ? `<span style="background:var(--bg-secondary); padding:0.3rem 0.6rem; border-radius:6px; border:1px solid var(--border-color); display:inline-flex; align-items:center; gap:0.4rem;"><i class="fab fa-github" style="color:var(--text-color);"></i> <a href="${c.github_url}" target="_blank" style="color:var(--primary-color); text-decoration:none;"><strong>GitHub</strong></a></span>` : '';
+                const sourceHtml = c.source ? `<span style="background:var(--bg-secondary); padding:0.3rem 0.6rem; border-radius:6px; border:1px solid var(--border-color); display:inline-flex; align-items:center; gap:0.4rem;"><i class="fas fa-bullhorn" style="color:var(--text-muted);"></i> <span>${isAr ? 'المصدر:' : 'Source:'} <strong>${c.source}</strong></span></span>` : '';
+
+                return `
+                    <div class="card" style="padding:1.5rem; background:var(--bg-card); border-radius:12px; margin-bottom:1.5rem; border:1px solid var(--border-color); box-shadow:var(--shadow-sm);">
+                        <div style="display:flex; align-items:center; gap:1rem; margin-bottom:1rem;">
+                            <div style="width:50px; height:50px; background:linear-gradient(135deg, var(--primary-color), #00d4a0); color:white; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:1.5rem; font-weight:800; flex-shrink:0;">
+                                ${(c.full_name || '?').charAt(0).toUpperCase()}
+                            </div>
+                            <div>
+                                <h2 style="margin:0; font-size:1.3rem; color:var(--text-color); font-weight:700;">${c.full_name}</h2>
+                                <div style="color:var(--text-muted); font-size:0.95rem; display:flex; align-items:center; gap:0.4rem; margin-top:0.2rem;">
+                                    <i class="fas fa-envelope"></i> ${c.email}
+                                </div>
+                            </div>
+                        </div>
+                        <div style="display:flex; gap:0.8rem; flex-wrap:wrap; font-size:0.85rem; color:var(--text-main);">
+                            ${phoneHtml}
+                            ${linkedInHtml}
+                            ${githubHtml}
+                            ${sourceHtml}
+                        </div>
+                    </div>
+                `;
+            })()}
+
             ${confidenceSectionHtml}
 
             <div class="eval-metrics-grid">

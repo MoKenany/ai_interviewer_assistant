@@ -22,10 +22,21 @@ async def login(request: LoginRequest, db: AsyncSession = Depends(get_db)):
 async def get_me(current_user: User = Depends(get_current_user)):
     return current_user
 
+from app.services.audit_service import AuditService
+from app.schemas.audit import AuditLogCreate
+from app.models.audit_log import AuditActionEnum
+
 @router.post("/logout")
-async def logout(current_user: User = Depends(get_current_user)):
+async def logout(current_user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)):
+    await AuditService.log_action(db, AuditLogCreate(
+        user_id=current_user.id, action=AuditActionEnum.logout, resource_type="user",
+        resource_id=current_user.id, details={"email": current_user.email}
+    ))
     return {"message": "Logged out successfully"}
 
 @router.post("/refresh", response_model=TokenResponse)
-async def refresh(credentials: HTTPAuthorizationCredentials = Depends(security_scheme)):
-    return AuthService.refresh_token(credentials.credentials)
+async def refresh(
+    credentials: HTTPAuthorizationCredentials = Depends(security_scheme),
+    db: AsyncSession = Depends(get_db)
+):
+    return await AuthService.refresh_token(db, credentials.credentials)

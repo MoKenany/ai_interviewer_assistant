@@ -1,13 +1,31 @@
 import { t, getLang, setLang } from '../core/i18n.js';
+import { api } from '../core/api.js';
 
 export class Navbar {
+    static _escapeHtml(value) {
+        return String(value ?? '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
     static render() {
         if (window.location.hash === '#/auth') {
             document.getElementById('navbar').style.display = 'none';
             return;
         }
         const lang = getLang();
-        const user = JSON.parse(localStorage.getItem('user_info') || '{}');
+        let user = {};
+        try {
+            user = JSON.parse(localStorage.getItem('user_info') || '{}');
+        } catch {
+            user = {};
+        }
+        const safeFullName = this._escapeHtml(user.full_name || '');
+        const safeRole = this._escapeHtml(user.role || '');
+        const safeInitial = this._escapeHtml((user.full_name || '').charAt(0).toUpperCase());
         const roleBadgeColor = { admin: 'var(--danger)', hr: 'var(--primary-color)', recruiter: 'var(--info)' };
         const roleColor = roleBadgeColor[user.role] || 'var(--text-muted)';
 
@@ -33,11 +51,11 @@ export class Navbar {
                 ${user.full_name ? `
                 <div style="display:flex;align-items:center;gap:0.5rem;padding:0.3rem 0.8rem;background:var(--bg-color);border-radius:var(--radius-md);">
                     <div style="width:30px;height:30px;border-radius:50%;background:var(--primary-color);color:white;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:0.85rem;">
-                        ${user.full_name.charAt(0).toUpperCase()}
+                        ${safeInitial}
                     </div>
                     <div style="line-height:1.2;">
-                        <div style="font-size:0.85rem;font-weight:600;">${user.full_name}</div>
-                        <div style="font-size:0.75rem;color:${roleColor};font-weight:600;">${user.role || ''}</div>
+                        <div style="font-size:0.85rem;font-weight:600;">${safeFullName}</div>
+                        <div style="font-size:0.75rem;color:${roleColor};font-weight:600;">${safeRole}</div>
                     </div>
                 </div>` : ''}
                 <button id="btn-logout" class="btn btn-outline" style="color:var(--danger);border-color:var(--danger);">
@@ -78,10 +96,7 @@ export class Navbar {
                 // Optional: call logout endpoint
                 const token = localStorage.getItem('access_token');
                 if (token) {
-                    await fetch('/api/v1/auth/logout', {
-                        method: 'POST',
-                        headers: { 'Authorization': `Bearer ${token}` }
-                    }).catch(() => {});
+                    await api.post('/auth/logout', {}).catch(() => {});
                 }
             } finally {
                 localStorage.removeItem('access_token');

@@ -1,4 +1,4 @@
-import { t, getLang } from '../core/i18n.js';
+import { getLang } from '../core/i18n.js';
 import { api } from '../core/api.js';
 import { Modal } from '../components/Modal.js';
 import { Toast } from '../components/Toast.js';
@@ -220,13 +220,22 @@ export class ApplicationsSection {
         // Open Create Modal
         const addBtn = document.getElementById('add-app-btn');
         if (addBtn) {
-            addBtn.addEventListener('click', () => this._openForm());
+            // إزالة المستمع القديم قبل إضافة جديد
+            if (addBtn._clickHandler) {
+                addBtn.removeEventListener('click', addBtn._clickHandler);
+            }
+            addBtn._clickHandler = () => this._openForm();
+            addBtn.addEventListener('click', addBtn._clickHandler);
         }
 
-        // Handle Status Change
+        // Handle Status Change & Delete
         const tbody = document.getElementById('app-tbody');
         if (tbody) {
-            tbody.addEventListener('change', async (e) => {
+            // إزالة المستمعين القدماء قبل إضافة جديد
+            if (tbody._changeHandler) {
+                tbody.removeEventListener('change', tbody._changeHandler);
+            }
+            tbody._changeHandler = async (e) => {
                 const sel = e.target.closest('.status-select');
                 if (!sel) return;
 
@@ -262,13 +271,18 @@ export class ApplicationsSection {
                 } finally {
                     sel.disabled = false;
                 }
-            });
+            };
+            tbody.addEventListener('change', tbody._changeHandler);
 
             // Handle Delete
-            tbody.addEventListener('click', (e) => {
+            if (tbody._clickHandler) {
+                tbody.removeEventListener('click', tbody._clickHandler);
+            }
+            tbody._clickHandler = (e) => {
                 const delBtn = e.target.closest('.delete-app-btn');
                 if (delBtn) this._delete(delBtn.dataset.id);
-            });
+            };
+            tbody.addEventListener('click', tbody._clickHandler);
         }
     }
 

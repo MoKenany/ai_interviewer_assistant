@@ -6,9 +6,22 @@ const activePipelinePolls = new Map();
 const PIPELINE_POLL_MS = 10000;
 const ACTIVE_PIPELINE_STATUSES = new Set(['running', 'pending']);
 
+/**
+ * ✅ Global cleanup: Stop all active polling timers
+ * Called when navigating away from pages with PipelineSection
+ */
+export function cleanupAllPipelinePolls() {
+    for (const [sessionId, timerId] of activePipelinePolls.entries()) {
+        clearTimeout(timerId);
+        activePipelinePolls.delete(sessionId);
+        console.log(`[Pipeline cleanup] Stopped polling for session ${sessionId}`);
+    }
+}
+
 export class PipelineSection {
     constructor(params) {
-        this.runId = params.runId;
+        // Accommodate 'runId' or 'sessionId' from route params
+        this.sessionId = params.runId || params.sessionId;
         this.pipelineData = null;
         this.sessionData = null;
         this.pollingInterval = null;
@@ -18,16 +31,13 @@ export class PipelineSection {
     async fetchData(options = {}) {
         const includeSession = options.includeSession ?? !this.sessionData;
         try {
-            if (includeSession) {
-                const [pipelineData, sessionData] = await Promise.all([
-                    api.get(`/sessions/${this.runId}/status`),
-                    api.get(`/sessions/${this.runId}`)
-                ]);
-                this.pipelineData = pipelineData;
-                this.sessionData = sessionData;
-            } else {
-                this.pipelineData = await api.get(`/sessions/${this.runId}/status`);
-            }
+            const [pipelineData, sessionData] = await Promise.all([
+                api.get(`/sessions/${this.sessionId}/status`, null, { cache: false }),
+                includeSession ? api.get(`/sessions/${this.sessionId}`, null, { cache: false }) : Promise.resolve(this.sessionData)
+            ]);
+
+            this.pipelineData = pipelineData;
+            this.sessionData = sessionData;
         } catch (error) {
             Toast.show(t('error'), 'error');
             this.pipelineData = null;
@@ -39,15 +49,22 @@ export class PipelineSection {
 
     render() {
         if (!this.pipelineData) {
-            return `<div style="text-align: center; padding: 2rem;">No Pipeline Data Found.</div>`;
+            return this._renderNotStarted();
         }
 
         const data = this.pipelineData;
-        const statusColor = data.status === 'completed' ? 'var(--success)' : (data.status === 'failed' ? 'var(--danger)' : 'var(--info)');
+        if (!data.id || data.id === 0 || !data.steps || data.steps.length === 0) {
+            return this._renderNotStarted();
+        }
+
+        // Safeguard against missing status property
+        const status = data.status || 'unknown';
+        const statusColor = status === 'completed' ? 'var(--success)' : (status === 'failed' ? 'var(--danger)' : 'var(--info)');
 
         const stepOrder = {
             'audio_extract': 1,
             'stt': 2,
+            'transcript_validation': 2.5,
             'qa_extraction': 3,
             'scoring': 4,
             'insight_generation': 5
@@ -55,9 +72,12 @@ export class PipelineSection {
 
         let stepsHtml = '';
         if (data.steps && data.steps.length > 0) {
-            const sortedSteps = [...data.steps].sort((a, b) => {
-                return (stepOrder[a.step_name] || 99) - (stepOrder[b.step_name] || 99);
-            });
+            const sortedSteps = [...data.steps]
+                // Filter out skipped steps (validation step when disabled)
+                .filter(step => step.error_message !== 'Skipped by user')
+                .sort((a, b) => {
+                    return (stepOrder[a.step_name] || 99) - (stepOrder[b.step_name] || 99);
+                });
             stepsHtml = sortedSteps.map(step => {
                 let stepColor = 'var(--text-muted)';
                 let statusBadge = '';
@@ -81,6 +101,7 @@ export class PipelineSection {
                 const friendlyNames = {
                     audio_extract: '1. Audio Extraction (استخراج الصوت)',
                     stt: '2. Speech to Text (تحويل الصوت إلى نص)',
+                    transcript_validation: '2.5. Transcript Validation (التحقق من توافق المقابلة)',
                     qa_extraction: '3. Q&A Extraction (استخراج الأسئلة والأجوبة)',
                     scoring: '4. Scoring & Assessment (التقييم والدرجات)',
                     insight_generation: '5. Executive Summary & Recommendations (ملخص الأداء والتقارير)'
@@ -115,24 +136,24 @@ export class PipelineSection {
                 </div>
                 <button class="btn btn-primary" onclick="window.location.hash='/applications/${appId}/sessions'"><i class="fas fa-arrow-left"></i> Back to Sessions</button>
             </div>
-            
+
             <div class="card" style="margin-bottom: 2rem; border-top: 4px solid ${statusColor}; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem;">
                 <div>
-                    <h3>Overall Status: <span style="color: ${statusColor};">${data.status.toUpperCase()}</span></h3>
+                    <h3>Overall Status: <span style="color: ${statusColor};">${status.toUpperCase()}</span></h3>
                     <p style="font-size: 0.9rem; color: var(--text-muted); margin-top: 0.5rem;">
                         Started: ${data.started_at ? new Date(data.started_at).toLocaleString() : 'N/A'}<br>
                         Completed: ${data.completed_at ? new Date(data.completed_at).toLocaleString() : 'N/A'}
                     </p>
                     ${data.error_message ? `<div style="background: #ffebee; color: var(--danger); padding: 1rem; border-radius: var(--radius-md); margin-top: 1rem;">${data.error_message}</div>` : ''}
                 </div>
-                ${(data.status === 'running' || data.status === 'pending') ? `
+                ${(status === 'running' || status === 'pending') ? `
                     <button class="btn btn-outline stop-pipeline-btn" style="color: var(--danger); border-color: var(--danger); font-weight: 600; padding: 0.5rem 1rem;">
                         <i class="fas fa-stop" style="margin-right: 0.25rem;"></i> Stop Pipeline (إيقاف المعالجة)
                     </button>
                 ` : ''}
             </div>
 
-            ${data.status === 'completed' ? `
+            ${status === 'completed' ? `
                 <div class="card" style="background: var(--primary-light); border: 1px solid var(--primary-color); margin-bottom: 2rem; display: flex; justify-content: space-between; align-items: center; padding: 1.5rem; flex-wrap: wrap; gap: 1rem;">
                     <div>
                         <h4 style="color: var(--primary-color); margin-bottom: 0.2rem;"><i class="fas fa-magic"></i> AI Evaluation Ready!</h4>
@@ -151,62 +172,119 @@ export class PipelineSection {
         `;
     }
 
+    _renderNotStarted() {
+        const appId = this.sessionData?.application_id || '';
+        const isAr = localStorage.getItem('lang') === 'ar' || localStorage.getItem('app_lang') === 'ar';
+        return `
+            <div style="text-align:center; padding:4rem 2rem; max-width:620px; margin:3rem auto; background:var(--surface-color); border:1px solid var(--border-color); border-radius:14px;">
+                <div style="width:76px; height:76px; border-radius:50%; display:flex; align-items:center; justify-content:center; margin:0 auto 1.25rem; background:rgba(79,70,229,0.1); color:var(--primary-color);">
+                    <i class="fas fa-project-diagram" style="font-size:2rem;"></i>
+                </div>
+                <h2 style="margin:0 0 0.75rem; color:var(--text-main);">
+                    ${isAr ? 'لم تبدأ معالجة المقابلة بعد' : 'Pipeline has not started yet'}
+                </h2>
+                <p style="color:var(--text-muted); line-height:1.7; margin:0 auto 1.75rem; max-width:460px;">
+                    ${isAr ? 'لا توجد خطوات معالجة أو تقييم لهذه الجلسة حتى الآن. ارفع ملف المقابلة أو ابدأ المعالجة من صفحة الجلسات.' : 'There are no processing steps or evaluation results for this session yet. Upload interview media or start processing from the sessions page.'}
+                </p>
+                <button class="btn btn-primary pipeline-back-btn" style="padding:0.75rem 1.3rem;">
+                    <i class="fas fa-arrow-${isAr ? 'right' : 'left'}"></i>
+                    ${isAr ? 'العودة للجلسات' : 'Back to sessions'}
+                </button>
+            </div>
+        `;
+    }
+
     mount() {
         this._schedulePolling();
 
-        // Handle retry clicks
         const container = document.getElementById('app-content');
         if (!container) return;
 
+        const backBtn = container.querySelector('.pipeline-back-btn');
+        if (backBtn) {
+            // إزالة المستمع القديم قبل إضافة جديد
+            if (backBtn._clickHandler) {
+                backBtn.removeEventListener('click', backBtn._clickHandler);
+            }
+            backBtn._clickHandler = () => {
+                const appId = this.sessionData?.application_id || '';
+                window.location.hash = appId ? `/applications/${appId}/sessions` : '/evaluations';
+            };
+            backBtn.addEventListener('click', backBtn._clickHandler);
+        }
+
         const stopBtn = container.querySelector('.stop-pipeline-btn');
         if (stopBtn) {
-            stopBtn.addEventListener('click', async () => {
-                const isAr = localStorage.getItem('lang') === 'ar';
+            // إزالة المستمع القديم قبل إضافة جديد
+            if (stopBtn._clickHandler) {
+                stopBtn.removeEventListener('click', stopBtn._clickHandler);
+            }
+            stopBtn._clickHandler = async () => {
+                const isAr = localStorage.getItem('lang') === 'ar' || localStorage.getItem('app_lang') === 'ar';
                 if (!confirm(isAr ? 'هل أنت متأكد من إيقاف معالجة الـ AI لهذا الملف؟' : 'Are you sure you want to stop AI processing for this session?')) return;
 
                 try {
-                    await api.post(`/sessions/${this.runId}/stop`, {});
+                    const sessionId = this.pipelineData?.session_id || this.sessionId;
+                    if (!sessionId) throw new Error('Missing session id for this pipeline run');
+                    await api.post(`/sessions/${sessionId}/stop`, {});
                     Toast.show(isAr ? 'تم إيقاف معالجة الـ AI بنجاح' : 'AI processing stopped successfully', 'success');
                     await this.refresh();
                 } catch (err) {
                     Toast.show(err.message || 'Error stopping pipeline', 'error');
                 }
-            });
+            };
+            stopBtn.addEventListener('click', stopBtn._clickHandler);
         }
 
         const retryBtns = container.querySelectorAll('.retry-btn');
         retryBtns.forEach(btn => {
-            btn.addEventListener('click', async (e) => {
+            // إزالة المستمع القديم قبل إضافة جديد
+            if (btn._clickHandler) {
+                btn.removeEventListener('click', btn._clickHandler);
+            }
+            btn._clickHandler = async (e) => {
                 const stepName = e.currentTarget.dataset.step;
                 if (!confirm(`Retry step: ${stepName}?`)) return;
 
                 try {
+                    if (!this.pipelineData?.id) throw new Error('Pipeline run has not started yet');
                     await api.post(`/pipeline/runs/${this.pipelineData.id}/steps/${stepName}/retry`, {});
                     Toast.show('Step retry triggered', 'success');
                     await this.refresh();
                 } catch (err) {
                     Toast.show(err.message || 'Error retrying step', 'error');
                 }
-            });
+            };
+            btn.addEventListener('click', btn._clickHandler);
         });
     }
 
     _schedulePolling() {
         this._clearPolling();
-        if (!this.pipelineData || !ACTIVE_PIPELINE_STATUSES.has(this.pipelineData.status)) {
+
+        const status = this.pipelineData?.status;
+        const hasRun = this.pipelineData && this.pipelineData.id && this.pipelineData.id !== 0;
+
+        // ✅ Only poll if status is ACTIVE (running/pending)
+        // Stop polling for completed, failed, or unknown statuses
+        const shouldPoll = ACTIVE_PIPELINE_STATUSES.has(status);
+
+        if (!shouldPoll) {
+            // Ensure polling is completely stopped when not active
+            console.log(`[Pipeline ${this.sessionId}] Polling stopped - status: ${status}`);
             return;
         }
 
-        const existingTimer = activePipelinePolls.get(this.runId);
+        const existingTimer = activePipelinePolls.get(this.sessionId);
         if (existingTimer) {
             clearTimeout(existingTimer);
         }
 
         this.pollingInterval = setTimeout(async () => {
-            activePipelinePolls.delete(this.runId);
+            activePipelinePolls.delete(this.sessionId);
             await this.refresh();
         }, PIPELINE_POLL_MS);
-        activePipelinePolls.set(this.runId, this.pollingInterval);
+        activePipelinePolls.set(this.sessionId, this.pollingInterval);
     }
 
     _clearPolling() {
@@ -215,29 +293,49 @@ export class PipelineSection {
             this.pollingInterval = null;
         }
 
-        const activeTimer = activePipelinePolls.get(this.runId);
+        // ✅ MUST delete from global map to prevent orphaned timers
+        const activeTimer = activePipelinePolls.get(this.sessionId);
         if (activeTimer) {
             clearTimeout(activeTimer);
-            activePipelinePolls.delete(this.runId);
+            activePipelinePolls.delete(this.sessionId);
+            console.log(`[Pipeline ${this.sessionId}] Polling timer cleared from global map`);
         }
     }
 
     destroy() {
+        if (this.disposed) return; // Already disposed
+
         this.disposed = true;
         this._clearPolling();
+        console.log(`[Pipeline ${this.sessionId}] Destroyed - polling stopped`);
     }
 
     async refresh() {
-        if (this.disposed || window.location.hash !== `#/pipeline/runs/${this.runId}`) {
+        // ✅ Stop polling if component is disposed or out of view
+        if (this.disposed) {
+            return;
+        }
+
+        // Check if the current URL still contains this session ID
+        const currentHash = window.location.hash;
+        if (!currentHash.includes(String(this.sessionId))) {
+            console.log(`[Pipeline ${this.sessionId}] Out of view (hash: ${currentHash}), destroying...`);
             this.destroy();
             return;
         }
+
         await this.fetchData({ includeSession: false });
-        if (this.disposed || window.location.hash !== `#/pipeline/runs/${this.runId}`) {
+
+        // Re-check after fetch
+        if (this.disposed || !window.location.hash.includes(String(this.sessionId))) {
             this.destroy();
             return;
         }
-        document.getElementById('app-content').innerHTML = this.render();
-        this.mount();
+
+        const container = document.getElementById('app-content');
+        if (container) {
+            container.innerHTML = this.render();
+            this.mount();
+        }
     }
 }

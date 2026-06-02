@@ -326,41 +326,66 @@ export class JobsSection {
         this.renderGridOnly();
 
         // 1. Add Job Button
-        document.getElementById('add-job-btn').addEventListener('click', () => {
-            this.openJobForm();
-        });
+        const addBtn = document.getElementById('add-job-btn');
+        if (addBtn) {
+            // إزالة المستمع القديم قبل إضافة جديد
+            if (addBtn._clickHandler) {
+                addBtn.removeEventListener('click', addBtn._clickHandler);
+            }
+            addBtn._clickHandler = () => this.openJobForm();
+            addBtn.addEventListener('click', addBtn._clickHandler);
+        }
 
         // 2. Reactive Search Input
         const searchInput = document.getElementById('jobs-search-input');
         if (searchInput) {
-            searchInput.addEventListener('input', (e) => {
+            // إزالة المستمع القديم قبل إضافة جديد
+            if (searchInput._inputHandler) {
+                searchInput.removeEventListener('input', searchInput._inputHandler);
+            }
+            searchInput._inputHandler = (e) => {
                 this.searchQuery = e.target.value.trim();
                 this.applyFilters();
-            });
+            };
+            searchInput.addEventListener('input', searchInput._inputHandler);
         }
 
         // 3. Reactive Dept Filter Select
         const deptSelect = document.getElementById('jobs-dept-filter');
         if (deptSelect) {
-            deptSelect.addEventListener('change', (e) => {
+            // إزالة المستمع القديم قبل إضافة جديد
+            if (deptSelect._changeHandler) {
+                deptSelect.removeEventListener('change', deptSelect._changeHandler);
+            }
+            deptSelect._changeHandler = (e) => {
                 this.selectedDept = e.target.value;
                 this.applyFilters();
-            });
+            };
+            deptSelect.addEventListener('change', deptSelect._changeHandler);
         }
 
         // 4. Reactive Status Filter Select
         const statusSelect = document.getElementById('jobs-status-filter');
         if (statusSelect) {
-            statusSelect.addEventListener('change', (e) => {
+            // إزالة المستمع القديم قبل إضافة جديد
+            if (statusSelect._changeHandler) {
+                statusSelect.removeEventListener('change', statusSelect._changeHandler);
+            }
+            statusSelect._changeHandler = (e) => {
                 this.selectedStatus = e.target.value;
                 this.applyFilters();
-            });
+            };
+            statusSelect.addEventListener('change', statusSelect._changeHandler);
         }
 
         // 5. Grid Actions Delegation
         const gridContainer = document.getElementById('jobs-grid-container');
         if (gridContainer) {
-            gridContainer.addEventListener('click', (e) => {
+            // إزالة المستمع القديم قبل إضافة جديد
+            if (gridContainer._clickHandler) {
+                gridContainer.removeEventListener('click', gridContainer._clickHandler);
+            }
+            gridContainer._clickHandler = (e) => {
                 const editBtn = e.target.closest('.edit-job-btn');
                 const delBtn = e.target.closest('.delete-job-btn');
                 const viewBtn = e.target.closest('.view-job-btn');
@@ -388,7 +413,8 @@ export class JobsSection {
                 if (statCandidates) {
                     window.location.hash = `/candidates`;
                 }
-            });
+            };
+            gridContainer.addEventListener('click', gridContainer._clickHandler);
         }
     }
 
@@ -522,14 +548,128 @@ export class JobsSection {
     }
 
     async deleteJob(id) {
-        if (!confirm('Are you sure you want to delete this job?')) return;
+        const isAr = getLang() === 'ar';
+        
         try {
+            // Try normal delete first
             await api.fetch(`/jobs/${id}`, { method: 'DELETE' });
-            Toast.show('Job deleted successfully', 'success');
+            Toast.show(isAr ? 'تم حذف الوظيفة بنجاح' : 'Job deleted successfully', 'success');
             await this.refresh();
         } catch (e) {
-            Toast.show(e.message || 'Error deleting job', 'error');
+            // If blocked due to applications, show detailed preview
+            if (e.message && e.message.includes('active job applications')) {
+                await this._showForceDeleteModal(id);
+            } else {
+                Toast.show(e.message || (isAr ? 'خطأ في حذف الوظيفة' : 'Error deleting job'), 'error');
+            }
         }
+    }
+
+    async _showForceDeleteModal(jobId) {
+        const isAr = getLang() === 'ar';
+        
+        let preview;
+        try {
+            preview = await api.get(`/jobs/${jobId}/delete-preview`);
+        } catch (e) {
+            Toast.show(isAr ? 'فشل تحميل بيانات المرشحين' : 'Failed to load candidate data', 'error');
+            return;
+        }
+
+        const statusColors = {
+            applied: { bg: 'rgba(59,130,246,0.1)', color: '#3b82f6', label: isAr ? 'تم التقديم' : 'Applied' },
+            screening: { bg: 'rgba(245,158,11,0.1)', color: '#f59e0b', label: isAr ? 'فحص' : 'Screening' },
+            interview: { bg: 'rgba(139,92,246,0.1)', color: '#8b5cf6', label: isAr ? 'مقابلة' : 'Interview' },
+            offer: { bg: 'rgba(16,185,129,0.1)', color: '#10b981', label: isAr ? 'عرض' : 'Offer' },
+            hired: { bg: 'rgba(16,185,129,0.15)', color: '#059669', label: isAr ? 'تم التوظيف' : 'Hired' },
+            rejected: { bg: 'rgba(239,68,68,0.1)', color: '#ef4444', label: isAr ? 'مرفوض' : 'Rejected' }
+        };
+        const defaultStatus = { bg: 'rgba(100,116,139,0.1)', color: '#64748b', label: '' };
+
+        let versionsHtml = '';
+        for (const ver of preview.versions) {
+            if (ver.candidates.length === 0) continue;
+            const candidateRows = ver.candidates.map(c => {
+                const st = statusColors[c.application_status] || { ...defaultStatus, label: c.application_status };
+                return `
+                    <tr style="border-bottom:1px solid var(--border-color);">
+                        <td style="padding:0.6rem 0.75rem; font-weight:600; font-size:0.9rem;">${c.candidate_name}</td>
+                        <td style="padding:0.6rem 0.75rem; font-size:0.85rem; color:var(--text-muted);">${c.candidate_email}</td>
+                        <td style="padding:0.6rem 0.75rem;">
+                            <span style="background:${st.bg}; color:${st.color}; padding:0.2rem 0.55rem; border-radius:6px; font-size:0.78rem; font-weight:600;">${st.label}</span>
+                        </td>
+                    </tr>`;
+            }).join('');
+
+            versionsHtml += `
+                <div style="margin-bottom:1.25rem;">
+                    <div style="display:flex; align-items:center; gap:0.5rem; margin-bottom:0.5rem;">
+                        <i class="fas fa-code-branch" style="color:var(--primary-color);"></i>
+                        <span style="font-weight:700; font-size:0.95rem;">${isAr ? 'الإصدار' : 'Version'} #${ver.version_number}</span>
+                        <span style="color:var(--text-muted); font-size:0.8rem;">(${ver.candidates.length} ${isAr ? 'مرشحين' : 'candidates'})</span>
+                    </div>
+                    <div style="border:1px solid var(--border-color); border-radius:8px; overflow:hidden;">
+                        <table style="width:100%; border-collapse:collapse;">
+                            <thead>
+                                <tr style="background:var(--bg-secondary);">
+                                    <th style="padding:0.55rem 0.75rem; text-align:start; font-size:0.78rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">${isAr ? 'الاسم' : 'Name'}</th>
+                                    <th style="padding:0.55rem 0.75rem; text-align:start; font-size:0.78rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">${isAr ? 'البريد' : 'Email'}</th>
+                                    <th style="padding:0.55rem 0.75rem; text-align:start; font-size:0.78rem; font-weight:700; color:var(--text-muted); text-transform:uppercase;">${isAr ? 'الحالة' : 'Status'}</th>
+                                </tr>
+                            </thead>
+                            <tbody>${candidateRows}</tbody>
+                        </table>
+                    </div>
+                </div>`;
+        }
+
+        if (!versionsHtml) {
+            // No candidates found despite the error — just force-delete directly
+            try {
+                await api.fetch(`/jobs/${jobId}?force=true`, { method: 'DELETE' });
+                Toast.show(isAr ? 'تم حذف الوظيفة بنجاح' : 'Job deleted successfully', 'success');
+                await this.refresh();
+            } catch (err) {
+                Toast.show(err.message || 'Error deleting job', 'error');
+            }
+            return;
+        }
+
+        const content = `
+            <div style="margin-bottom:1rem;">
+                <div style="background:rgba(239,68,68,0.07); border:1px solid rgba(239,68,68,0.2); border-radius:10px; padding:1rem 1.25rem; margin-bottom:1.25rem;">
+                    <div style="display:flex; align-items:center; gap:0.6rem; margin-bottom:0.5rem;">
+                        <i class="fas fa-exclamation-triangle" style="color:#ef4444; font-size:1.1rem;"></i>
+                        <span style="font-weight:700; color:#ef4444; font-size:1rem;">${isAr ? 'تحذير: هذه الوظيفة مرتبطة بمرشحين' : 'Warning: This job has linked candidates'}</span>
+                    </div>
+                    <p style="margin:0; color:var(--text-muted); font-size:0.9rem; line-height:1.5;">
+                        ${isAr 
+                            ? `حذف الوظيفة "<strong>${preview.job_title}</strong>" سيؤدي إلى فصل <strong>${preview.total_affected_candidates}</strong> مرشح/مرشحين عن هذه الوظيفة نهائياً. ستُحذف جميع التقديمات (Applications) المرتبطة.`
+                            : `Deleting "<strong>${preview.job_title}</strong>" will permanently detach <strong>${preview.total_affected_candidates}</strong> candidate(s) from this job. All related applications will be removed.`}
+                    </p>
+                </div>
+                <div style="max-height:350px; overflow-y:auto; padding-inline-end:0.25rem;">
+                    ${versionsHtml}
+                </div>
+            </div>`;
+
+        const modal = new Modal({
+            title: isAr ? 'تأكيد حذف الوظيفة' : 'Confirm Job Deletion',
+            content: content,
+            saveText: isAr ? 'حذف نهائي' : 'Force Delete',
+            saveClass: 'btn btn-danger',
+            onSave: async () => {
+                try {
+                    await api.fetch(`/jobs/${jobId}?force=true`, { method: 'DELETE' });
+                    Toast.show(isAr ? 'تم حذف الوظيفة وجميع التقديمات المرتبطة' : 'Job and all linked applications deleted', 'success');
+                    await this.refresh();
+                } catch (err) {
+                    Toast.show(err.message || 'Error deleting job', 'error');
+                    throw err;
+                }
+            }
+        });
+        modal.show();
     }
 
     async refresh() {

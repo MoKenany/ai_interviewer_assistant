@@ -5,17 +5,24 @@ import io
 import csv
 import logging
 import asyncio
-from pydantic import EmailStr, ValidationError
-from typing import List
+from pydantic import BaseModel, EmailStr, ValidationError
+from typing import List, Optional
 
 from app.schemas.candidate import CandidateCreate, CandidateUpdate
 from app.repositories.candidate_repo import CandidateRepo
 from app.repositories.application_repo import ApplicationRepo
 from app.schemas.application import ApplicationCreate, ApplicationUpdateStatus, ApplicationUpdate
+from app.models.candidate import Candidate
+from app.models.job_application import JobApplication
+from app.models.job_version import JobVersion
 from app.core import storage
-from typing import List, Optional
+from sqlalchemy import func, select
 
 logger = logging.getLogger(__name__)
+
+
+class _EmailModel(BaseModel):
+    email: EmailStr
 
 # Mapping of possible column header aliases → our internal field names
 COLUMN_ALIASES = {
@@ -40,7 +47,7 @@ def _normalize_header(header: str) -> Optional[str]:
 def _validate_email(email: str) -> str:
     """Validate and normalize the email address from imported rows."""
     try:
-        normalized = EmailStr(email)
+        normalized = _EmailModel(email=email).email
     except (ValidationError, ValueError):
         raise ValueError("Email is invalid")
     return str(normalized).lower()
@@ -183,7 +190,10 @@ async def parse_import_file_async(filename: str, content: bytes) -> List[dict]:
 class CandidateService:
     @staticmethod
     async def create_candidate(db: AsyncSession, user_id: int, obj_in: CandidateCreate):
-        return await CandidateRepo.create(db, obj_in, user_id)
+        try:
+            return await CandidateRepo.create(db, obj_in, user_id)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
 
     @staticmethod
     async def get_candidates(db: AsyncSession):
@@ -314,7 +324,211 @@ class CandidateService:
 
 class ApplicationService:
     @staticmethod
+    async def bulk_import_candidates_to_job_version(
+        db: AsyncSession,
+        user_id: int,
+        job_version_id: int,
+        files: List[UploadFile]
+    ) -> dict:
+        if not files:
+            raise HTTPException(status_code=400, detail="No files provided")
+
+        job_version = await db.get(JobVersion, job_version_id)
+        if not job_version:
+            raise HTTPException(status_code=404, detail="Job version not found")
+
+        rows_with_meta = []
+        files_processed = 0
+        files_errors = []
+
+        for file in files:
+            filename = file.filename or "unknown"
+            try:
+                content = await file.read()
+                if not content:
+                    files_errors.append({"file": filename, "error": "File is empty"})
+                    continue
+
+                rows = await parse_import_file_async(filename, content)
+                if not rows:
+                    files_errors.append({"file": filename, "error": "No data rows found"})
+                    continue
+
+                files_processed += 1
+                for idx, row in enumerate(rows):
+                    rows_with_meta.append({
+                        "row": idx + 2,
+                        "source_file": filename,
+                        "data": row
+                    })
+            except HTTPException as exc:
+                files_errors.append({"file": filename, "error": exc.detail})
+            except Exception as exc:
+                files_errors.append({"file": filename, "error": str(exc)})
+
+        created_candidates = []
+        linked = []
+        skipped = []
+        errors = []
+        valid_rows = []
+        emails_to_check = set()
+        seen_import_emails = set()
+
+        for item in rows_with_meta:
+            row = item["data"]
+            row_num = item["row"]
+            source_file = item["source_file"]
+            email = (row.get("email") or "").strip().lower()
+            full_name = (row.get("full_name") or "").strip()
+
+            if not email:
+                errors.append({"row": row_num, "source_file": source_file, "reason": "Email is required", "data": row})
+                continue
+
+            try:
+                email = _validate_email(email)
+            except ValueError:
+                errors.append({"row": row_num, "source_file": source_file, "email": email, "reason": "Email is invalid", "data": row})
+                continue
+
+            if not full_name:
+                errors.append({"row": row_num, "source_file": source_file, "email": email, "reason": "Full name is required", "data": row})
+                continue
+
+            if email in seen_import_emails:
+                skipped.append({
+                    "row": row_num,
+                    "source_file": source_file,
+                    "email": email,
+                    "full_name": full_name,
+                    "reason": "Duplicate email in import file"
+                })
+                continue
+
+            seen_import_emails.add(email)
+            emails_to_check.add(email)
+            valid_rows.append({
+                "row": row_num,
+                "source_file": source_file,
+                "email": email,
+                "full_name": full_name,
+                "data": row
+            })
+
+        existing_by_email = {}
+        if emails_to_check:
+            result = await db.execute(select(Candidate).where(func.lower(Candidate.email).in_(emails_to_check)))
+            existing_by_email = {candidate.email.lower(): candidate for candidate in result.scalars().all()}
+
+        existing_application_candidate_ids = set()
+        if existing_by_email:
+            result = await db.execute(
+                select(JobApplication.candidate_id).where(
+                    JobApplication.job_version_id == job_version_id,
+                    JobApplication.candidate_id.in_([c.id for c in existing_by_email.values()])
+                )
+            )
+            existing_application_candidate_ids = set(result.scalars().all())
+
+        new_candidates_by_email = {}
+        try:
+            for item in valid_rows:
+                existing_candidate = existing_by_email.get(item["email"])
+                if existing_candidate:
+                    if existing_candidate.id in existing_application_candidate_ids:
+                        skipped.append({
+                            "row": item["row"],
+                            "source_file": item["source_file"],
+                            "email": item["email"],
+                            "full_name": item["full_name"],
+                            "reason": "Candidate already assigned to this job version"
+                        })
+                    continue
+
+                row = item["data"]
+                candidate = Candidate(
+                    user_id=user_id,
+                    full_name=item["full_name"],
+                    email=item["email"],
+                    phone=(row.get("phone") or "").strip() or None,
+                    linkedin_url=(row.get("linkedin_url") or "").strip() or None,
+                    github_url=(row.get("github_url") or "").strip() or None,
+                    source=(row.get("source") or "").strip() or "Job version import",
+                )
+                db.add(candidate)
+                new_candidates_by_email[item["email"]] = candidate
+
+            if new_candidates_by_email:
+                await db.flush()
+                for email, candidate in new_candidates_by_email.items():
+                    existing_by_email[email] = candidate
+                    created_candidates.append({
+                        "candidate_id": candidate.id,
+                        "email": candidate.email,
+                        "full_name": candidate.full_name
+                    })
+
+            for item in valid_rows:
+                candidate = existing_by_email.get(item["email"])
+                if not candidate or candidate.id in existing_application_candidate_ids:
+                    continue
+
+                application = JobApplication(
+                    candidate_id=candidate.id,
+                    job_version_id=job_version_id
+                )
+                db.add(application)
+                await db.flush()
+                existing_application_candidate_ids.add(candidate.id)
+                linked.append({
+                    "row": item["row"],
+                    "source_file": item["source_file"],
+                    "email": candidate.email,
+                    "full_name": candidate.full_name,
+                    "application": {
+                        "id": application.id,
+                        "candidate_id": candidate.id,
+                        "job_version_id": job_version_id,
+                        "status": "applied",
+                        "candidate": {
+                            "id": candidate.id,
+                            "full_name": candidate.full_name,
+                            "email": candidate.email,
+                            "phone": candidate.phone,
+                            "source": candidate.source
+                        }
+                    }
+                })
+
+            await db.commit()
+        except Exception:
+            await db.rollback()
+            raise
+
+        return {
+            "created_candidates": created_candidates,
+            "linked": linked,
+            "skipped": skipped,
+            "errors": errors,
+            "total_rows": len(rows_with_meta),
+            "files_processed": files_processed,
+            "files_errors": files_errors
+        }
+
+    @staticmethod
     async def create_application(db: AsyncSession, obj_in: ApplicationCreate):
+        candidate = await CandidateRepo.get(db, obj_in.candidate_id)
+        if not candidate:
+            raise HTTPException(status_code=404, detail="Candidate not found")
+
+        job_version = await db.get(JobVersion, obj_in.job_version_id)
+        if not job_version:
+            raise HTTPException(status_code=404, detail="Job version not found")
+
+        existing_apps = await ApplicationRepo.get_all(db, candidate_id=obj_in.candidate_id, job_version_id=obj_in.job_version_id)
+        if existing_apps:
+            raise HTTPException(status_code=400, detail="Candidate already applied to this job version")
+
         return await ApplicationRepo.create(db, obj_in)
 
     @staticmethod

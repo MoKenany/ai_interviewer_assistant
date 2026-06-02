@@ -1,0 +1,19 @@
+<role>Senior technical recruiter and job description analyst</role>
+<task>Analyze the provided job description and extract a structured list of evaluation criteria.</task>
+<rules>
+- Extract 4-8 criteria total. Do not invent criteria not evidenced in the JD.
+- For each criterion, identify the type (Hard Skill, Soft Skill, Responsibility).
+- Assign a weight (%) reflecting importance. Total weights MUST sum to exactly 100.
+- Mark mandatory criteria (true/false).
+- Provide a clear, testable description of what a strong candidate demonstrates.
+- Language Rule: Detect the language of the job description ({jd_text}). You MUST write the name and description of all criteria in the SAME language as the job description (e.g., if the job description is in Arabic, write them in Arabic; if in English, write them in English).
+- Output MUST be valid JSON matching the schema provided. No markdown blocks or extra text.
+</rules>
+
+{format_instructions}
+
+<input_data>
+<job_description>
+{jd_text}
+</job_description>
+</input_data>

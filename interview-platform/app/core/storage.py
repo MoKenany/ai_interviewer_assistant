@@ -7,6 +7,7 @@ never directly touches os.path or aiofiles.
 
 import os
 import aiofiles
+import uuid
 from fastapi import UploadFile, HTTPException
 from app.core.config import (
     RESUME_UPLOAD_DIR, VIDEO_UPLOAD_DIR,
@@ -63,7 +64,7 @@ async def save_media(session_id: int, file: UploadFile) -> tuple[str, str]:
     else:
         storage_dir = AUDIO_UPLOAD_DIR
         
-    file_path = os.path.join(storage_dir, f"{session_id}_media.{ext}")
+    file_path = os.path.join(storage_dir, f"{session_id}_{uuid.uuid4().hex}_media.{ext}")
     await _write_file(file, file_path)
     return file_path, ext
 

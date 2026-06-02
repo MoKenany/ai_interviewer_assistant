@@ -8,7 +8,7 @@ import { ApplicationsSection } from '../sections/ApplicationsSection.js';
 import { SessionsSection } from '../sections/SessionsSection.js';
 import { Navbar } from '../components/Navbar.js';
 
-import { PipelineSection } from '../sections/PipelineSection.js';
+import { PipelineSection, cleanupAllPipelinePolls } from '../sections/PipelineSection.js';
 import { AuditSection } from '../sections/AuditSection.js';
 import { EvaluationDetailSection } from '../sections/EvaluationDetailSection.js';
 import { JobVersionsSection } from '../sections/JobVersionsSection.js';
@@ -76,6 +76,10 @@ export class Router {
         const loader = document.getElementById('global-loader');
         
         loader.style.display = 'flex';
+        
+        // ✅ Cleanup all PipelineSection polling timers before view change
+        cleanupAllPipelinePolls();
+        
         if (this.currentView && typeof this.currentView.destroy === 'function') {
             this.currentView.destroy();
         }

@@ -1,16 +1,11 @@
 import bcrypt
 import jwt
 from datetime import datetime, timedelta, timezone
-from typing import Optional
-import os
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
-
-SECRET_KEY = os.getenv("SECRET_KEY", "supersecretkey_change_me_in_production")
-ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
-ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("JWT_EXPIRY_MINUTES", "1440"))
+from app.core.config import SECRET_KEY, JWT_ALGORITHM, JWT_EXPIRY_MINUTES
 
 security_scheme = HTTPBearer()
 
@@ -28,14 +23,14 @@ def verify_password(plain: str, hashed: str) -> bool:
 
 def create_access_token(payload: dict) -> str:
     to_encode = payload.copy()
-    expire = datetime.now(timezone.utc) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    expire = datetime.now(timezone.utc) + timedelta(minutes=JWT_EXPIRY_MINUTES)
     to_encode.update({"exp": expire})
-    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=JWT_ALGORITHM)
     return encoded_jwt
 
 def decode_access_token(token: str) -> dict:
     try:
-        decoded_token = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        decoded_token = jwt.decode(token, SECRET_KEY, algorithms=[JWT_ALGORITHM])
         return decoded_token
     except jwt.ExpiredSignatureError:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token has expired")
@@ -51,9 +46,13 @@ async def get_current_user(
     user_id: str = payload.get("sub")
     if user_id is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Could not validate credentials")
+    try:
+        user_id_int = int(user_id)
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Could not validate credentials")
     
     from app.repositories.user_repo import UserRepo
-    user = await UserRepo.get_by_id(db, int(user_id))
+    user = await UserRepo.get_by_id(db, user_id_int)
     if user is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
     if not user.is_active:

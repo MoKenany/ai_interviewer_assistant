@@ -33,6 +33,7 @@ class InterviewSession(Base):
     pipeline_status = Column(Enum(PipelineStatusEnum), default=PipelineStatusEnum.pending, index=True)
     full_transcript = Column(Text, nullable=True)
     auto_delete_media = Column(Boolean, default=False, nullable=False)
+    enable_transcript_validation = Column(Boolean, default=False, nullable=False, comment="Optional: validate transcript compatibility with JD")
     created_at = Column(DateTime(timezone=True), server_default=func.now())
     updated_at = Column(DateTime(timezone=True), onupdate=func.now())
 

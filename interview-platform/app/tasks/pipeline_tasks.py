@@ -147,6 +147,8 @@ async def _run_interview_pipeline_async(session_id: int) -> dict:
     Returns:
         Dictionary with results
     """
+    run = None
+    current_step = None
     from app.database import engine
     try:
         async with AsyncSessionLocal() as db:
@@ -155,25 +157,36 @@ async def _run_interview_pipeline_async(session_id: int) -> dict:
             if not session:
                 raise FatalError(f"Session {session_id} not found")
             
-            # Check if pipeline already running
+            # ✅ Refresh session to ensure we have the latest validation preference from DB
+            await db.refresh(session)
+            logger.info(f"Pipeline {session_id} loaded - enable_transcript_validation={session.enable_transcript_validation}")
+            
+            # ✅ Get or create pipeline run
+            # Task expects run to be registered by API (status=pending)
             existing_run_query = await db.execute(
                 select(AIPipelineRun).filter(
                     AIPipelineRun.session_id == session_id,
                     AIPipelineRun.status.in_([PipelineRunStatusEnum.pending, PipelineRunStatusEnum.running])
                 )
             )
-            if existing_run_query.scalars().first():
-                raise PipelineAlreadyRunning(f"Pipeline already running for session {session_id}")
+            existing_run = existing_run_query.scalars().first()
             
-            # Create pipeline run
-            run = AIPipelineRun(
-                session_id=session_id,
-                status=PipelineRunStatusEnum.running,
-                started_at=datetime.utcnow()
-            )
-            db.add(run)
-            await db.commit()
-            await db.refresh(run)
+            if existing_run:
+                # Use existing run registered by API, just transition to running
+                run = existing_run
+                run.status = PipelineRunStatusEnum.running
+                await db.commit()
+                await db.refresh(run)
+            else:
+                # Fallback: create run if API didn't register it
+                run = AIPipelineRun(
+                    session_id=session_id,
+                    status=PipelineRunStatusEnum.running,
+                    started_at=datetime.utcnow()
+                )
+                db.add(run)
+                await db.commit()
+                await db.refresh(run)
             
             # Initialize token budget
             budget = TokenBudget(max_tokens_per_session=MAX_TOKENS_PER_SESSION)
@@ -183,6 +196,7 @@ async def _run_interview_pipeline_async(session_id: int) -> dict:
             for step_name in [
                 StepNameEnum.audio_extract,
                 StepNameEnum.stt,
+                StepNameEnum.transcript_validation,
                 StepNameEnum.qa_extraction,
                 StepNameEnum.scoring,
                 StepNameEnum.insight_generation
@@ -197,8 +211,6 @@ async def _run_interview_pipeline_async(session_id: int) -> dict:
                 steps_dict[step_name] = step
             
             await db.commit()
-            
-            current_step = None
             
             try:
                 # Load job application and version
@@ -256,6 +268,26 @@ async def _run_interview_pipeline_async(session_id: int) -> dict:
                         db, session, media, transcript, steps_dict, session_id
                     )
                 
+                # ========== STEP 2.5: Transcript Validation (Optional) ==========
+                # Only run if explicitly enabled by user to save tokens
+                logger.info(f"Pipeline {session_id} - Checking transcript validation: enable={session.enable_transcript_validation}")
+                if session.enable_transcript_validation:
+                    logger.info(f"Pipeline {session_id} - Running transcript validation (ENABLED)")
+                    current_step = steps_dict[StepNameEnum.transcript_validation]
+                    validation_result = await _step_transcript_validation(
+                        db, session, transcript, job_version.raw_jd_text, steps_dict,
+                        session_id, budget
+                    )
+                else:
+                    # Skip validation - mark as skipped
+                    logger.info(f"Pipeline {session_id} - Skipping transcript validation (DISABLED)")
+                    steps_dict[StepNameEnum.transcript_validation].status = StepStatusEnum.success
+                    steps_dict[StepNameEnum.transcript_validation].completed_at = datetime.utcnow()
+                    steps_dict[StepNameEnum.transcript_validation].latency_ms = 0
+                    steps_dict[StepNameEnum.transcript_validation].error_message = "Skipped by user"
+                    validation_result = None
+                    await db.commit()
+                
                 # ========== STEP 3: QA Extraction ==========
                 current_step = steps_dict[StepNameEnum.qa_extraction]
                 qa_pairs = await _step_qa_extraction(
@@ -304,9 +336,11 @@ async def _run_interview_pipeline_async(session_id: int) -> dict:
                     current_step.completed_at = datetime.utcnow()
                     current_step.error_message = error_msg
                 
-                run.status = PipelineRunStatusEnum.failed
-                run.completed_at = datetime.utcnow()
-                run.error_message = error_msg
+                if run:
+                    run.status = PipelineRunStatusEnum.failed
+                    run.completed_at = datetime.utcnow()
+                    run.error_message = error_msg
+                
                 session.pipeline_status = PipelineStatusEnum.failed
                 
                 await db.commit()
@@ -442,6 +476,76 @@ async def _step_stt(db, session, media, audio_path, steps_dict, session_id) -> s
         step.error_message = str(exc)
         await db.commit()
         raise
+
+
+async def _step_transcript_validation(
+    db, session, transcript, jd_text, steps_dict,
+    session_id, budget
+) -> dict:
+    """Step 2.5: Validate transcript compatibility with JD"""
+    step = steps_dict[StepNameEnum.transcript_validation]
+    
+    try:
+        start = datetime.utcnow()
+        step.status = StepStatusEnum.running
+        
+        # Check token budget
+        estimated = TokenEstimator.estimate_tokens(
+            f"{transcript}|{jd_text}"
+        )
+        if not budget.can_proceed(estimated):
+            raise PipelineTokenBudgetExceeded(
+                f"Cannot proceed with transcript validation: "
+                f"estimated {estimated} tokens, only {budget.remaining} remaining"
+            )
+        
+        await db.commit()
+        
+        # Validate transcript compatibility with timeout
+        validation_result = await asyncio.wait_for(
+            LlamaClient.run_transcript_validation(transcript, jd_text),
+            timeout=AI_REQUEST_TIMEOUT
+        )
+        actual_tokens = tokens_tracker.get() or estimated
+        
+        # Store validation result
+        db.add(SessionArtifact(
+            session_id=session_id,
+            pipeline_step_id=step.id,
+            artifact_type=ArtifactTypeEnum.validation_result,
+            content=artifact_content(
+                validation_result.model_dump(mode='json'),
+                metadata={
+                    "compatibility_score": validation_result.compatibility_score,
+                    "is_compatible": validation_result.is_compatible,
+                    "recommendation": validation_result.recommendation,
+                },
+                validation_result=validation_result.model_dump(mode='json'),
+            )
+        ))
+        
+        end = datetime.utcnow()
+        step.status = StepStatusEnum.success
+        step.completed_at = end
+        step.latency_ms = int((end - start).total_seconds() * 1000)
+        step.tokens_used = actual_tokens
+        budget.add_usage("transcript_validation", actual_tokens)
+        await db.commit()
+        
+        logger.info(f"Pipeline {session_id} - Transcript validation: score={validation_result.compatibility_score}, recommendation={validation_result.recommendation}")
+        
+        return validation_result.model_dump(mode='json')
+    
+    except asyncio.TimeoutError:
+        raise RetriableError(
+            f"Transcript validation request timed out after {AI_REQUEST_TIMEOUT} seconds"
+        )
+    except Exception as exc:
+        step.status = StepStatusEnum.failed
+        step.error_message = str(exc)
+        await db.commit()
+        raise
+
 
 
 async def _step_qa_extraction(

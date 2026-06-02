@@ -1,4 +1,3 @@
-import { t } from '../core/i18n.js';
 
 export function renderUnassignedCandidatesSection(unassigned, unassignedSearch, unassignedDisplayLimit, selectedUnassigned, unassignedSourceFilter, unassignedActiveFilter, labels, isAr) {
     const query = (unassignedSearch || '').toLowerCase().trim();

@@ -101,11 +101,40 @@ class SessionService:
             return {
                 "id": 0,
                 "session_id": session_id,
-                "status": "pending",
+                "status": session.pipeline_status.value,
                 "started_at": session.created_at,
+                "completed_at": None,
+                "error_message": None,
                 "steps": []
             }
-        return run
+        
+        # ✅ Serialize run object to dict for Pydantic response
+        # This ensures the response matches AIPipelineRunResponse schema
+        steps_list = []
+        if hasattr(run, 'steps') and run.steps:
+            for step in run.steps:
+                steps_list.append({
+                    "id": step.id,
+                    "run_id": step.run_id,
+                    "step_name": step.step_name.value if hasattr(step.step_name, 'value') else str(step.step_name),
+                    "status": step.status.value if hasattr(step.status, 'value') else str(step.status),
+                    "started_at": step.started_at,
+                    "completed_at": step.completed_at,
+                    "error_message": step.error_message,
+                    "tokens_used": getattr(step, 'tokens_used', None),
+                    "latency_ms": getattr(step, 'latency_ms', None),
+                    "prompt_version": getattr(step, 'prompt_version', None)
+                })
+        
+        return {
+            "id": run.id,
+            "session_id": run.session_id,
+            "status": run.status.value if hasattr(run.status, 'value') else str(run.status),
+            "started_at": run.started_at,
+            "completed_at": run.completed_at,
+            "error_message": run.error_message,
+            "steps": steps_list
+        }
 
     @staticmethod
     async def get_artifacts(db: AsyncSession, session_id: int):

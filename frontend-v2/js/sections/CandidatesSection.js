@@ -361,10 +361,16 @@ export class CandidatesSection {
 
     async deleteAllUnassigned() {
         const isAr = getLang() === 'ar';
+        const pwd = prompt(isAr ? 'في المرحلة التجريبية، أدخل كلمة السر (delall000111) لتأكيد الحذف الشامل:' : 'In trial phase, enter password (delall000111) to confirm bulk delete:');
+        if (pwd !== 'delall000111') {
+            Toast.show(isAr ? 'تم الإلغاء أو كلمة المرور غير صحيحة' : 'Cancelled or incorrect password', 'error');
+            return;
+        }
+
         if (!confirm(isAr ? 'هل أنت متأكد من حذف جميع المرشحين غير المعينين؟ (لا يمكن التراجع)' : 'Are you sure you want to delete ALL unassigned candidates? (Cannot be undone)')) return;
 
         try {
-            await api.fetch('/candidates/unassigned', { method: 'DELETE' });
+            await api.fetch('/candidates/unassigned?confirm_password=' + encodeURIComponent(pwd), { method: 'DELETE' });
             Toast.show(isAr ? 'تم حذف جميع المرشحين غير المعينين' : 'All unassigned candidates deleted', 'success');
             await this.refresh();
         } catch (err) {
@@ -374,10 +380,16 @@ export class CandidatesSection {
 
     async deleteAllAssigned() {
         const isAr = getLang() === 'ar';
+        const pwd = prompt(isAr ? 'في المرحلة التجريبية، أدخل كلمة السر (delall000111) لتأكيد الحذف الشامل:' : 'In trial phase, enter password (delall000111) to confirm bulk delete:');
+        if (pwd !== 'delall000111') {
+            Toast.show(isAr ? 'تم الإلغاء أو كلمة المرور غير صحيحة' : 'Cancelled or incorrect password', 'error');
+            return;
+        }
+
         if (!confirm(isAr ? 'هل أنت متأكد من حذف جميع المرشحين المعينين؟ (لا يمكن التراجع)' : 'Are you sure you want to delete ALL assigned candidates? (Cannot be undone)')) return;
 
         try {
-            await api.fetch('/candidates/assigned', { method: 'DELETE' });
+            await api.fetch('/candidates/assigned?confirm_password=' + encodeURIComponent(pwd), { method: 'DELETE' });
             Toast.show(isAr ? 'تم حذف جميع المرشحين المعينين' : 'All assigned candidates deleted', 'success');
             await this.refresh();
         } catch (err) {
@@ -403,28 +415,45 @@ export class CandidatesSection {
         // إدارة أزرار التبويب (Tabs)
         const tabButtons = document.querySelectorAll('.tab-btn');
         tabButtons.forEach(btn => {
-            btn.addEventListener('click', async () => {
+            // إزالة المستمعين القدماء قبل إضافة جديد
+            btn.removeEventListener('click', btn._tabClickHandler);
+            btn._tabClickHandler = async () => {
                 this.activeTab = btn.dataset.tab;
                 await this.refresh();
-            });
+            };
+            btn.addEventListener('click', btn._tabClickHandler);
         });
 
         // 1. Add Candidate Button
         const addBtn = document.getElementById('add-cand-btn');
         if (addBtn) {
-            addBtn.addEventListener('click', () => this.openCandidateForm());
+            // إزالة المستمع القديم قبل إضافة جديد
+            if (addBtn._clickHandler) {
+                addBtn.removeEventListener('click', addBtn._clickHandler);
+            }
+            addBtn._clickHandler = () => this.openCandidateForm();
+            addBtn.addEventListener('click', addBtn._clickHandler);
         }
 
         // 1b. Import Candidates Button
         const importBtn = document.getElementById('import-cand-btn');
         if (importBtn) {
-            importBtn.addEventListener('click', () => this.openImportModal());
+            // إزالة المستمع القديم قبل إضافة جديد
+            if (importBtn._clickHandler) {
+                importBtn.removeEventListener('click', importBtn._clickHandler);
+            }
+            importBtn._clickHandler = () => this.openImportModal();
+            importBtn.addEventListener('click', importBtn._clickHandler);
         }
 
         // 2. Collapsible Accordion logic
         const toggles = document.querySelectorAll('.accordion-toggle');
         toggles.forEach(toggle => {
-            toggle.addEventListener('click', () => {
+            // إزالة المستمع القديم قبل إضافة جديد
+            if (toggle._accordionHandler) {
+                toggle.removeEventListener('click', toggle._accordionHandler);
+            }
+            toggle._accordionHandler = () => {
                 const targetId = toggle.dataset.target;
                 const body = document.getElementById(targetId);
                 const parent = toggle.closest('.job-accordion-card');
@@ -438,7 +467,8 @@ export class CandidatesSection {
                         parent.classList.add('active');
                     }
                 }
-            });
+            };
+            toggle.addEventListener('click', toggle._accordionHandler);
         });
 
         // 3. Delegate click events inside app-content cleanly to avoid leaks
@@ -666,22 +696,7 @@ export class CandidatesSection {
         }
     }
 
-    toggleSelectAllUnassigned() {
-        const visible = this._getVisibleUnassigned();
-        if (visible.length === 0) return;
-        const allSelected = visible.every(c => this.selectedUnassigned.has(c.candidate_id));
-        if (allSelected) {
-            visible.forEach(c => this.selectedUnassigned.delete(c.candidate_id));
-        } else {
-            visible.forEach(c => this.selectedUnassigned.add(c.candidate_id));
-        }
-        return this.refresh();
-    }
 
-    async clearUnassignedSelection() {
-        this.selectedUnassigned.clear();
-        await this.refresh();
-    }
 
     async openBulkLinkJobModal(candidateIds = null) {
         const isAr = getLang() === 'ar';

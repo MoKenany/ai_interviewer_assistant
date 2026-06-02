@@ -1,18 +1,19 @@
-from datetime import date
+from datetime import date, timedelta
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy import func
 from typing import Dict, Any, Optional
 from app.database import get_db
-from app.models.job import Job
+from app.models.job import Job, JobStatusEnum
 from app.models.job_version import JobVersion
 from app.models.job_application import JobApplication
 from app.models.interview_session import InterviewSession, PipelineStatusEnum
 from app.models.interview_evaluation import InterviewEvaluation
+from app.core.security import get_current_user
 import json
 
-router = APIRouter(prefix="/dashboard", tags=["Dashboard"])
+router = APIRouter(prefix="/dashboard", tags=["Dashboard"], dependencies=[Depends(get_current_user)])
 
 @router.get("/metrics")
 async def get_dashboard_metrics(
@@ -36,7 +37,7 @@ async def get_dashboard_metrics(
     if from_date:
         filters.append(JobApplication.created_at >= from_date)
     if to_date:
-        filters.append(JobApplication.created_at <= to_date)
+        filters.append(JobApplication.created_at < to_date + timedelta(days=1))
 
     active_sessions_query = select(func.count(InterviewSession.id))
     active_sessions_query = active_sessions_query.join(JobApplication, session_join)
@@ -115,10 +116,12 @@ async def get_dashboard_metrics(
         InterviewEvaluation.id,
         InterviewEvaluation.overall_score,
         InterviewEvaluation.confidence_score,
-        InterviewEvaluation.hiring_recommendation
+        InterviewEvaluation.hiring_recommendation,
+        InterviewSession.ai_mode
     ).join(JobApplication, evaluation_join)
     evaluations_query = evaluations_query.join(JobVersion, application_job_version_join)
     evaluations_query = evaluations_query.join(Job, job_version_job_join)
+    evaluations_query = evaluations_query.join(InterviewSession, InterviewEvaluation.session_id == InterviewSession.id)
     evaluations_query = evaluations_query.where(
         InterviewEvaluation.overall_score.isnot(None),
         InterviewEvaluation.confidence_score.isnot(None),
@@ -135,11 +138,15 @@ async def get_dashboard_metrics(
         "no_hire": 0,
         "strong_no_hire": 0
     }
+    ai_mode_counts = {}
     review_risk_count = 0
     for eval_row in evaluations_data:
         recommendation = eval_row.hiring_recommendation.value if eval_row.hiring_recommendation else None
         if recommendation:
             recommendation_counts[recommendation] = recommendation_counts.get(recommendation, 0) + 1
+
+        ai_mode = eval_row.ai_mode.value if eval_row.ai_mode else "normal"
+        ai_mode_counts[ai_mode] = ai_mode_counts.get(ai_mode, 0) + 1
 
         if eval_row.overall_score is not None and eval_row.confidence_score is not None:
             if eval_row.overall_score >= 75 and eval_row.confidence_score < 0.5:
@@ -149,11 +156,13 @@ async def get_dashboard_metrics(
             "id": eval_row.id,
             "overall_score": eval_row.overall_score,
             "confidence_score": eval_row.confidence_score,
-            "recommendation": recommendation
+            "recommendation": recommendation,
+            "ai_mode": ai_mode
         })
 
     quality_summary = {
         "recommendation_counts": recommendation_counts,
+        "ai_mode_counts": ai_mode_counts,
         "review_risk_count": review_risk_count
     }
 
@@ -176,7 +185,7 @@ async def get_dashboard_metrics(
         func.count(JobApplication.id)
     ).join(JobVersion, application_job_version_join)
     dept_query = dept_query.join(Job, job_version_job_join)
-    dept_query = dept_query.where(Job.status == 'open', *filters)
+    dept_query = dept_query.where(Job.status == JobStatusEnum.open, *filters)
     dept_query = dept_query.group_by(Job.department)
     dept_result = await db.execute(dept_query)
     department_loads = dept_result.all()

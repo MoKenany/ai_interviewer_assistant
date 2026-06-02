@@ -1,7 +1,7 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
-from sqlalchemy import func
+from sqlalchemy import func, outerjoin
 from typing import List, Dict, Any
 from app.database import get_db
 from app.schemas.job import JobCreate, JobUpdate, JobResponse, JobVersionCreate, JobVersionUpdate, JobVersionResponse, EvaluationCriteriaCreate, EvaluationCriteriaResponse
@@ -16,34 +16,38 @@ router = APIRouter(prefix="/jobs", tags=["jobs"], dependencies=[Depends(get_curr
 
 @router.get("/summary", response_model=List[Dict[str, Any]])
 async def get_jobs_summary(db: AsyncSession = Depends(get_db)):
-    # 1. Fetch all jobs
-    jobs = await JobService.get_jobs(db)
-    
-    # 2. Query versions counts per job
-    versions_query = select(JobVersion.job_id, func.count(JobVersion.id)).group_by(JobVersion.job_id)
-    versions_result = await db.execute(versions_query)
-    versions_counts = {row[0]: row[1] for row in versions_result.all()}
-    
-    # 3. Query applications counts per job
-    apps_query = select(Job.id, func.count(JobApplication.id))\
-        .join(JobVersion, JobVersion.job_id == Job.id)\
-        .join(JobApplication, JobApplication.job_version_id == JobVersion.id)\
-        .group_by(Job.id)
-    apps_result = await db.execute(apps_query)
-    apps_counts = {row[0]: row[1] for row in apps_result.all()}
+    # Optimized single query with aggregations to avoid N+1 problem
+    query = select(
+        Job.id,
+        Job.title,
+        Job.department,
+        Job.location,
+        Job.employment_type,
+        Job.status,
+        Job.created_at,
+        func.count(func.distinct(JobVersion.id)).label("version_count"),
+        func.count(func.distinct(JobApplication.id)).label("candidate_count")
+    ).outerjoin(
+        JobVersion, JobVersion.job_id == Job.id
+    ).outerjoin(
+        JobApplication, JobApplication.job_version_id == JobVersion.id
+    ).group_by(Job.id, Job.title, Job.department, Job.location, Job.employment_type, Job.status, Job.created_at)
+
+    result = await db.execute(query)
+    jobs_data = result.all()
 
     summary = []
-    for job in jobs:
+    for row in jobs_data:
         summary.append({
-            "id": job.id,
-            "title": job.title,
-            "department": job.department,
-            "location": job.location,
-            "employment_type": job.employment_type,
-            "status": job.status.value if hasattr(job.status, "value") else job.status,
-            "created_at": job.created_at,
-            "version_count": versions_counts.get(job.id, 0),
-            "candidate_count": apps_counts.get(job.id, 0)
+            "id": row.id,
+            "title": row.title,
+            "department": row.department,
+            "location": row.location,
+            "employment_type": row.employment_type,
+            "status": row.status.value if hasattr(row.status, "value") else row.status,
+            "created_at": row.created_at,
+            "version_count": row.version_count or 0,
+            "candidate_count": row.candidate_count or 0
         })
     return summary
 
@@ -63,9 +67,14 @@ async def get_job(job_id: int, db: AsyncSession = Depends(get_db)):
 async def update_job(job_id: int, job_in: JobUpdate, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
     return await JobService.update_job(db, job_id, job_in, user.id)
 
+@router.get("/{job_id}/delete-preview")
+async def delete_preview(job_id: int, db: AsyncSession = Depends(get_db)):
+    """Returns affected candidates and versions before deletion."""
+    return await JobService.get_delete_preview(db, job_id)
+
 @router.delete("/{job_id}")
-async def delete_job(job_id: int, db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
-    await JobService.delete_job(db, job_id, user.id)
+async def delete_job(job_id: int, force: bool = Query(False), db: AsyncSession = Depends(get_db), user: User = Depends(get_current_user)):
+    await JobService.delete_job(db, job_id, user.id, force=force)
     return {"message": "Job deleted"}
 
 @router.post("/{job_id}/versions", response_model=JobVersionResponse, status_code=201)

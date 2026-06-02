@@ -21,6 +21,12 @@ SECRET_KEY: str = os.getenv("SECRET_KEY", "change_me_in_production")
 JWT_ALGORITHM: str = os.getenv("JWT_ALGORITHM", "HS256")
 JWT_EXPIRY_MINUTES: int = int(os.getenv("JWT_EXPIRY_MINUTES", "1440"))
 
+# ── CORS Origins ───────────────────────────────────────────────────
+ALLOWED_ORIGINS: list = os.getenv(
+    "ALLOWED_ORIGINS",
+    "http://localhost:3000,http://127.0.0.1:3000,http://localhost:8000,http://127.0.0.1:8000"
+).split(",")
+
 # ── AI Keys ────────────────────────────────────────────────────────
 GROQ_API_KEY: str = os.getenv("GROQ_API_KEY", "")
 if GROQ_API_KEY:

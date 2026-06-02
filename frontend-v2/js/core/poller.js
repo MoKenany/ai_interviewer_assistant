@@ -8,7 +8,7 @@ import { api } from './api.js';
 export class PipelinePoller {
     /**
      * Initialize pipeline poller
-     * 
+     *
      * @param {number} sessionId - Session ID to poll
      * @param {Object} config - Configuration object
      * @param {number} config.interval - Poll interval in milliseconds (default: 2000)
@@ -27,12 +27,12 @@ export class PipelinePoller {
             onComplete: () => {},
             ...config
         };
-        
+
         this.pollInterval = null;
         this.attempts = 0;
         this.isRunning = false;
     }
-    
+
     /**
      * Start polling for pipeline status
      */
@@ -41,13 +41,13 @@ export class PipelinePoller {
             console.warn('Poller already running');
             return;
         }
-        
+
         this.isRunning = true;
         this.attempts = 0;
-        
+
         this.pollInterval = setInterval(async () => {
             this.attempts++;
-            
+
             // Check if max attempts exceeded
             if (this.attempts > this.config.maxAttempts) {
                 this.stop();
@@ -56,26 +56,26 @@ export class PipelinePoller {
                 );
                 return;
             }
-            
+
             try {
                 const status = await this.fetchStatus();
-                
+
                 // Call update callback
                 this.config.onUpdate(status);
-                
+
                 // Check if pipeline completed or failed
                 if (status.status === 'completed' || status.status === 'failed') {
                     this.stop();
                     this.config.onComplete(status);
                 }
-                
+
             } catch (error) {
                 console.error('Polling error:', error);
                 this.config.onError(error);
             }
         }, this.config.interval);
     }
-    
+
     /**
      * Stop polling
      */
@@ -86,14 +86,14 @@ export class PipelinePoller {
             this.isRunning = false;
         }
     }
-    
+
     /**
      * Fetch current pipeline status
      */
     async fetchStatus() {
-        return api.get(`/sessions/${this.sessionId}/status`);
+        return api.get(`/sessions/${this.sessionId}/status`, null, { cache: false });
     }
-    
+
     /**
      * Get current polling status
      */
@@ -114,7 +114,7 @@ export class PipelinePoller {
 export function updatePipelineUI(status) {
     const stepsContainer = document.getElementById('pipeline-steps');
     if (!stepsContainer) return;
-    
+
     const stepsHtml = (status.steps || []).map(step => `
         <div class="step step-${step.status}">
             <div class="step-header">
@@ -129,7 +129,7 @@ export function updatePipelineUI(status) {
             </div>
         </div>
     `).join('');
-    
+
     stepsContainer.innerHTML = stepsHtml || '<p>No steps available</p>';
 }
 
@@ -140,16 +140,16 @@ export function updatePipelineUI(status) {
 export function updateProgressBar(steps) {
     const progressBar = document.getElementById('progress-bar');
     if (!progressBar) return;
-    
+
     const totalSteps = steps?.length || 5;
     const completedSteps = steps?.filter(s => s.status === 'success').length || 0;
     const failedSteps = steps?.filter(s => s.status === 'failed').length || 0;
-    
+
     const percentage = (completedSteps / totalSteps) * 100;
-    
+
     progressBar.style.width = percentage + '%';
     progressBar.textContent = `${Math.round(percentage)}%`;
-    
+
     if (failedSteps > 0) {
         progressBar.classList.add('error');
         progressBar.classList.remove('success');
@@ -193,11 +193,11 @@ function translateStatus(status) {
  */
 export function formatDuration(ms) {
     if (!ms) return 'N/A';
-    
+
     const seconds = Math.floor(ms / 1000);
     const minutes = Math.floor(seconds / 60);
     const hours = Math.floor(minutes / 60);
-    
+
     if (hours > 0) {
         return `${hours}h ${minutes % 60}m`;
     } else if (minutes > 0) {

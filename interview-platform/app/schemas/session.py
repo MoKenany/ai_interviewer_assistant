@@ -20,6 +20,7 @@ class SessionResponse(BaseModel):
     pipeline_status: PipelineStatusEnum
     full_transcript: Optional[str] = None
     auto_delete_media: bool = False
+    enable_transcript_validation: bool = False
     created_at: datetime
     updated_at: Optional[datetime]
 
@@ -28,7 +29,6 @@ class SessionResponse(BaseModel):
 
 class MediaFileResponse(BaseModel):
     id: int
-    session_id: Optional[int] = None
     file_path: str
     file_type: str
     duration_seconds: Optional[int] = None

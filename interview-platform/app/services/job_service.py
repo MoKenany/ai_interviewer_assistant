@@ -1,5 +1,6 @@
 import asyncio
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.future import select
 from fastapi import HTTPException
 from app.schemas.job import JobCreate, JobUpdate, JobVersionCreate, JobVersionUpdate, EvaluationCriteriaCreate
 from app.schemas.audit import AuditLogCreate
@@ -95,26 +96,46 @@ class JobService:
             resource_type="job",
             resource_id=updated_job.id,
             details={
-                "changes": job_update.model_dump(exclude_unset=True)
+                "changes": job_update.model_dump(mode='json', exclude_unset=True)
             }
         ))
         return updated_job
 
     @staticmethod
-    async def delete_job(db: AsyncSession, job_id: int, user_id: int):
+    async def delete_job(db: AsyncSession, job_id: int, user_id: int, force: bool = False):
         job = await JobService.get_job(db, job_id)
         
         # Check if any version of this job has associated job applications
         from app.repositories.job_repo import JobVersionRepo
         from app.repositories.application_repo import ApplicationRepo
         versions = await JobVersionRepo.get_versions(db, job_id)
+        
+        has_applications = False
         for version in versions:
             apps = await ApplicationRepo.get_all(db, job_version_id=version.id)
             if apps:
-                raise HTTPException(
-                    status_code=400,
-                    detail="Cannot delete job because one or more of its versions are referenced by active job applications."
+                has_applications = True
+                break
+        
+        if has_applications and not force:
+            raise HTTPException(
+                status_code=400,
+                detail="Cannot delete job because one or more of its versions are referenced by active job applications. Use force=true to override."
+            )
+        
+        # If force, delete all applications (via ORM to respect cascade to sessions, etc.)
+        if has_applications and force:
+            from app.models.job_application import JobApplication
+            from sqlalchemy.orm import selectinload
+            for version in versions:
+                apps_query = await db.execute(
+                    select(JobApplication)
+                    .options(selectinload(JobApplication.sessions))
+                    .filter(JobApplication.job_version_id == version.id)
                 )
+                for app in apps_query.scalars().all():
+                    await db.delete(app)
+            await db.flush()
                 
         await AuditService.log_action(db, AuditLogCreate(
             user_id=user_id,
@@ -124,10 +145,50 @@ class JobService:
             details={
                 "title": job.title,
                 "department": job.department,
-                "status": str(job.status)
+                "status": str(job.status),
+                "force": force
             }
         ))
         await JobRepo.delete_job(db, job)
+
+    @staticmethod
+    async def get_delete_preview(db: AsyncSession, job_id: int):
+        """Return details of candidates and versions that would be affected by deleting this job."""
+        from app.repositories.job_repo import JobVersionRepo
+        from app.repositories.application_repo import ApplicationRepo
+        from app.models.candidate import Candidate
+        
+        job = await JobService.get_job(db, job_id)
+        versions = await JobVersionRepo.get_versions(db, job_id)
+        
+        affected_versions = []
+        all_candidate_ids = set()
+        
+        for version in versions:
+            apps = await ApplicationRepo.get_all(db, job_version_id=version.id)
+            version_candidates = []
+            for app in apps:
+                candidate = await db.get(Candidate, app.candidate_id)
+                if candidate:
+                    all_candidate_ids.add(candidate.id)
+                    version_candidates.append({
+                        "candidate_id": candidate.id,
+                        "candidate_name": candidate.full_name,
+                        "candidate_email": candidate.email,
+                        "application_status": app.status.value if hasattr(app.status, 'value') else str(app.status)
+                    })
+            affected_versions.append({
+                "version_id": version.id,
+                "version_number": version.version_number,
+                "candidates": version_candidates
+            })
+        
+        return {
+            "job_id": job.id,
+            "job_title": job.title,
+            "total_affected_candidates": len(all_candidate_ids),
+            "versions": affected_versions
+        }
 
 class JobVersionService:
     @staticmethod

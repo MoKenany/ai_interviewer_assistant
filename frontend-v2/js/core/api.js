@@ -1,4 +1,8 @@
-const API_BASE = 'http://127.0.0.1:8000/api/v1';
+const API_BASE = window.__API_BASE__ || '/api/v1';
+
+// Optional in-memory cache for GET requests. Dynamic pages should fetch fresh data by default.
+const requestCache = new Map();
+const CACHE_DURATION = 60000; // 1 minute cache by default
 
 export class APIError extends Error {
     constructor(message, errorType = 'api_error', status = 0, details = null) {
@@ -13,38 +17,88 @@ export class APIError extends Error {
 export const api = {
     _refreshPromise: null,
 
+    // Clear cache for a specific endpoint or all
+    clearCache(endpoint = null) {
+        if (endpoint) {
+            requestCache.delete(endpoint);
+        } else {
+            requestCache.clear();
+        }
+    },
+
+    clearCacheByPrefix(prefix) {
+        if (!prefix) return;
+        for (const key of requestCache.keys()) {
+            if (key === prefix || key.startsWith(`${prefix}?`) || key.startsWith(`${prefix}/`)) {
+                requestCache.delete(key);
+            }
+        }
+    },
+
     async fetch(endpoint, options = {}) {
         return this._fetchWithAuthRetry(endpoint, options, true);
     },
 
     async _fetchWithAuthRetry(endpoint, options = {}, allowRefresh = true) {
+        const { silent = false, cache = false, cacheTime = CACHE_DURATION, ...fetchOptions } = options;
+
+        // Check cache for GET requests
+        if (fetchOptions.method === 'GET' && cache) {
+            const cacheKey = `${endpoint}`;
+            if (requestCache.has(cacheKey)) {
+                const cached = requestCache.get(cacheKey);
+                if (Date.now() - cached.timestamp < cacheTime) {
+                    return cached.data;
+                } else {
+                    requestCache.delete(cacheKey);
+                }
+            }
+        }
+
         let token = null;
+
         try {
             token = localStorage.getItem('access_token');
         } catch (storageErr) {
             console.warn('Local storage is unavailable:', storageErr);
         }
 
-        const isFormData = options.body instanceof FormData;
+        const isFormData = fetchOptions.body instanceof FormData;
         const headers = {
             ...(isFormData ? {} : { 'Content-Type': 'application/json' }),
             ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
-            ...(options.headers || {})
+            ...(fetchOptions.headers || {})
         };
+
         if (isFormData) {
             delete headers['Content-Type'];
         }
 
+      // التعديل هنا:
+        const bodyToLog = fetchOptions.body instanceof FormData 
+            ? '[FormData Object]' 
+            : (fetchOptions.body ? JSON.parse(fetchOptions.body) : '');
+
+        console.log(`[API] ${fetchOptions.method || 'GET'} ${endpoint}`, bodyToLog);
+
         try {
             const response = await fetch(`${API_BASE}${endpoint}`, {
-                ...options,
+                ...fetchOptions,
                 headers
             });
-            
+
             const contentType = response.headers.get('content-type') || '';
-            const data = contentType.includes('application/json')
-                ? await response.json()
-                : await response.text();
+            const textResponse = await response.text();
+
+            // Safely parse JSON to prevent crashes on 204 No Content or empty bodies
+            let data = textResponse;
+            if (textResponse && contentType.includes('application/json')) {
+                try {
+                    data = JSON.parse(textResponse);
+                } catch (parseErr) {
+                    console.warn(`Failed to parse JSON for ${endpoint}`, parseErr);
+                }
+            }
 
             if (response.status === 401) {
                 if (allowRefresh && token && !endpoint.startsWith('/auth/')) {
@@ -59,14 +113,26 @@ export const api = {
 
             if (!response.ok) {
                 const detail = data?.detail || data || {};
-                const message = detail.message || detail.error || detail || 'API Error';
+                const message = detail.message || detail.error || (typeof detail === 'string' ? detail : 'API Error');
                 const errorType = detail.error_type || 'api_error';
                 throw new APIError(message, errorType, response.status, detail);
             }
-            
+
+            // Cache successful GET responses
+            if (fetchOptions.method === 'GET' && cache) {
+                const cacheKey = `${endpoint}`;
+                requestCache.set(cacheKey, { data, timestamp: Date.now() });
+            }
+
+            if (fetchOptions.method && fetchOptions.method !== 'GET') {
+                this._clearRelatedCache(endpoint);
+            }
+
             return data;
         } catch (error) {
-            console.error(`API Fetch Error [${endpoint}]:`, error);
+            if (!silent) {
+                console.error(`API Fetch Error [${endpoint}]:`, error);
+            }
             throw error;
         }
     },
@@ -80,7 +146,9 @@ export const api = {
                 return false;
             }
         }
+
         if (!token) return false;
+
         if (!this._refreshPromise) {
             this._refreshPromise = fetch(`${API_BASE}/auth/refresh`, {
                 method: 'POST',
@@ -106,31 +174,90 @@ export const api = {
     },
 
     clearAuth() {
-        localStorage.removeItem('access_token');
+        try {
+            localStorage.removeItem('access_token');
+        } catch (storageErr) {
+            console.warn('Local storage is unavailable:', storageErr);
+        }
         window.location.hash = '#/login';
     },
 
-    async get(endpoint) {
-        return this.fetch(endpoint, { method: 'GET' });
+    async get(endpoint, params = null, options = {}) {
+        if (params && typeof params === 'object') {
+            const searchParams = new URLSearchParams();
+            Object.entries(params).forEach(([k, v]) => {
+                if (v !== null && v !== undefined && v !== '') {
+                    searchParams.append(k, v);
+                }
+            });
+            const query = searchParams.toString();
+            if (query) endpoint = `${endpoint}?${query}`;
+        }
+        return this.fetch(endpoint, { method: 'GET', cache: options.cache === true, ...options });
     },
 
-    async post(endpoint, body) {
-        return this.fetch(endpoint, {
+    async post(endpoint, body, options = {}) {
+        // Clear related cache entries on successful POST
+        const result = await this.fetch(endpoint, {
             method: 'POST',
-            body: body instanceof FormData ? body : JSON.stringify(body)
+            body: body instanceof FormData ? body : JSON.stringify(body),
+            ...options
         });
+        this._clearRelatedCache(endpoint);
+        return result;
     },
 
-    async patch(endpoint, body) {
-        return this.fetch(endpoint, {
+    async patch(endpoint, body, options = {}) {
+        // Clear related cache entries on successful PATCH
+        const result = await this.fetch(endpoint, {
             method: 'PATCH',
-            body: JSON.stringify(body)
+            body: body instanceof FormData ? body : JSON.stringify(body),
+            ...options
         });
+        this._clearRelatedCache(endpoint);
+        return result;
     },
 
-    async delete(endpoint) {
-        return this.fetch(endpoint, {
-            method: 'DELETE'
+    async delete(endpoint, options = {}) {
+        // Clear related cache entries on successful DELETE
+        const result = await this.fetch(endpoint, {
+            method: 'DELETE',
+            ...options
         });
+        this._clearRelatedCache(endpoint);
+        return result;
+    },
+
+    _clearRelatedCache(endpoint) {
+        const path = String(endpoint || '').split('?')[0];
+        this.clearCache(endpoint);
+        this.clearCache(path);
+
+        const firstSegment = path.match(/^\/[^/]+/)?.[0];
+        if (firstSegment) {
+            this.clearCacheByPrefix(firstSegment);
+        }
+
+        if (path.includes('/jobs')) {
+            this.clearCacheByPrefix('/jobs');
+            this.clearCacheByPrefix('/applications');
+            this.clearCacheByPrefix('/candidates');
+            this.clearCache('/jobs/summary');
+        }
+        if (path.includes('/applications')) {
+            this.clearCacheByPrefix('/applications');
+            this.clearCacheByPrefix('/sessions');
+            this.clearCacheByPrefix('/candidates');
+        }
+        if (path.includes('/sessions')) {
+            this.clearCacheByPrefix('/sessions');
+            this.clearCacheByPrefix('/applications');
+            this.clearCacheByPrefix('/evaluations');
+            this.clearCacheByPrefix('/candidates/organized');
+        }
+        if (path.includes('/candidates')) {
+            this.clearCacheByPrefix('/candidates');
+            this.clearCacheByPrefix('/applications');
+        }
     }
 };

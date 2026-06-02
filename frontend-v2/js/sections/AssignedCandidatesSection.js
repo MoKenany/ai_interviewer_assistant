@@ -1,4 +1,44 @@
-import { t } from '../core/i18n.js';
+
+function buildScoreProgressBar(score, isAr) {
+    if (score === null || score === undefined) {
+        return `<span class="text-muted" style="font-size:0.8rem;">${isAr ? 'بدون تقييم' : 'No score'}</span>`;
+    }
+    const roundedScore = Math.round(score);
+    const color = roundedScore >= 80 ? '#10b981' : roundedScore >= 50 ? '#f59e0b' : 'var(--danger-color, #ef4444)';
+    return `<div style="display:flex; align-items:center; gap:0.4rem;">
+        <div style="flex:1; background: rgba(0,0,0,0.05); height: 6px; border-radius:3px; overflow:hidden; min-width:80px;">
+            <div style="background: ${color}; width:${roundedScore}%; height:100%; border-radius:3px;"></div>
+        </div>
+        <strong style="font-size:0.8rem; color:${color}; min-width:30px;">${roundedScore}%</strong>
+    </div>`;
+}
+
+function buildAllScoresHtml(applications, isAr) {
+    if (!Array.isArray(applications) || applications.length === 0) {
+        return `<span class="text-muted" style="font-size:0.85rem;">${isAr ? 'بدون تقييمات' : 'No evaluations'}</span>`;
+    }
+    
+    // Sort by score descending (null scores go to bottom)
+    const sorted = [...applications].sort((a, b) => {
+        const scoreA = a.overall_score ?? -1;
+        const scoreB = b.overall_score ?? -1;
+        return scoreB - scoreA;
+    });
+    
+    const scoresHtml = sorted.map((app, idx) => {
+        const scoreBar = buildScoreProgressBar(app.overall_score, isAr);
+        const confidence = app.confidence_score !== null && app.confidence_score !== undefined
+            ? `${app.confidence_score > 1 ? Math.round(app.confidence_score) : Math.round(app.confidence_score * 100)}% ${isAr ? 'ثقة' : 'Conf.'}`
+            : '';
+        return `<div style="padding:0.5rem 0.75rem; border-radius:8px; background:rgba(15,23,42,0.02); border-left:3px solid ${app.overall_score !== null ? '#0f766e' : '#d1d5db'};">
+            <div style="font-size:0.75rem; font-weight:600; color:var(--text-muted); margin-bottom:0.3rem;">${app.job_title} ${isAr ? 'الإصدار' : 'v'} ${app.version_number}</div>
+            ${scoreBar}
+            ${confidence ? `<div style="font-size:0.75rem; color:var(--text-muted); margin-top:0.2rem;"><i class="fas fa-brain"></i> ${confidence}</div>` : ''}
+        </div>`;
+    }).join('');
+    
+    return `<div style="display:flex; flex-direction:column; gap:0.5rem;">${scoresHtml}</div>`;
+}
 
 function buildAssignedCandidatesRows(assignedCandidates, selectedAssigned, labels, isAr) {
     if (!Array.isArray(assignedCandidates) || assignedCandidates.length === 0) {
@@ -7,19 +47,7 @@ function buildAssignedCandidatesRows(assignedCandidates, selectedAssigned, label
 
     return assignedCandidates.map(c => {
         const firstApp = (c.applications || [])[0] || {};
-        const score = firstApp.overall_score !== null && firstApp.overall_score !== undefined ? Math.round(firstApp.overall_score) : null;
-        const scoreHtml = score !== null ? `
-            <div class="score-container" style="display:flex; align-items:center; gap:0.5rem; min-width:160px;">
-                <div class="score-progress-bg" style="flex:1; background: rgba(0,0,0,0.05); height: 8px; border-radius:4px; overflow:hidden;">
-                    <div style="background: ${score >= 80 ? '#10b981' : score >= 50 ? '#f59e0b' : 'var(--danger-color, #ef4444)'}; width:${score}%; height:100%; border-radius:4px;"></div>
-                </div>
-                <strong style="font-size:0.85rem;">${score}%</strong>
-            </div>
-        ` : `<span class="text-muted" style="font-size:0.85rem;">${labels.noScore || 'No score'}</span>`;
-
-        const confidenceBadge = firstApp.confidence_score !== null && firstApp.confidence_score !== undefined
-            ? `<span class="badge badge-outline-info" style="font-size:0.75rem; margin-top:0.2rem;"><i class="fas fa-brain"></i> ${firstApp.confidence_score > 1 ? Math.round(firstApp.confidence_score) : Math.round(firstApp.confidence_score * 100)}% ${isAr ? 'ثقة' : 'Confidence'}</span>`
-            : '';
+        const scoresHtml = buildAllScoresHtml(c.applications || [], isAr);
 
         const jobsHtml = (c.applications || []).map(app => {
             const status = app.app_status || '-';
@@ -48,7 +76,11 @@ function buildAssignedCandidatesRows(assignedCandidates, selectedAssigned, label
                 </td>
                 <td>${versionSummary || '-'}</td>
                 <td>${statusSummary || '-'}</td>
-                <td>${scoreHtml}${confidenceBadge}</td>
+                <td style="min-width:260px; max-width:300px;">
+                    <div style="max-height:160px; overflow-y:auto; padding-right:0.2rem;">
+                        ${scoresHtml}
+                    </div>
+                </td>
                 <td class="text-center">
                     <button class="btn-action view-transcripts-btn" data-id="${c.candidate_id}" title="${isAr ? 'سجلات المقابلات' : 'Interview Transcripts'}"><i class="fas fa-comments" style="color:var(--primary-color);"></i></button>
                     <button class="btn-action edit-cand-btn" data-id="${c.candidate_id}" title="Edit"><i class="fas fa-edit"></i></button>

@@ -1,4 +1,4 @@
-import os
+from pathlib import Path
 import asyncio
 import time
 from tenacity import RetryError, retry, wait_exponential, stop_after_attempt
@@ -12,6 +12,8 @@ import contextvars
 from app.schemas.job import EvaluationCriteriaProposal
 from app.models.interview_evaluation import HiringRecommendationEnum
 from app.core.config import GROQ_API_KEY
+
+PROMPTS_DIR = Path(__file__).resolve().parents[3] / "prompts"
 
 # Pydantic Models for Parsing
 class CriteriaList(BaseModel):
@@ -66,6 +68,39 @@ class InsightReport(BaseModel):
     hiring_recommendation: HiringRecommendationEnum
     confidence_score: float
     suggested_questions: List[SuggestedQuestion]
+
+
+class JobMatchDetail(BaseModel):
+    jd_job_title: str
+    transcript_job_title_inferred: str
+    titles_match: bool
+    match_explanation: str
+
+class TopicAnalysis(BaseModel):
+    jd_key_topics: List[str]
+    transcript_topics: List[str]
+    overlap_percentage: int
+    missing_topics: List[str]
+    extra_topics: List[str]
+
+class LanguageAnalysis(BaseModel):
+    jd_language: str
+    transcript_language: str
+    language_match: bool
+    is_translated: bool
+    translation_notes: Optional[str] = None
+
+class TranscriptValidationResult(BaseModel):
+    is_compatible: bool
+    compatibility_score: int = Field(ge=0, le=100)
+    job_match: JobMatchDetail
+    topic_analysis: TopicAnalysis
+    language_analysis: LanguageAnalysis
+    critical_issues: List[str]
+    assessment_notes: str
+    recommendation: str  # "proceed" | "review_manually" | "reject"
+    reasoning: str
+
 
 
 # Context variables to track tokens
@@ -143,7 +178,7 @@ class LlamaClient:
     async def run_jd_agent(jd_text: str) -> List[EvaluationCriteriaProposal]:
         model = get_llama_model()
         parser = PydanticOutputParser(pydantic_object=CriteriaList)
-        prompt_path = os.path.join(os.getcwd(), "prompts", "jd_extraction", "v2.txt")
+        prompt_path = PROMPTS_DIR / "jd_extraction" / "v2.txt"
         with open(prompt_path, "r") as f:
             template_str = f.read()
         prompt = PromptTemplate(template=template_str, input_variables=["jd_text"], partial_variables={"format_instructions": parser.get_format_instructions()})
@@ -162,7 +197,7 @@ class LlamaClient:
     async def run_qa_extraction(transcript: str, criteria: list) -> List[QAPair]:
         model = get_llama_model()
         parser = PydanticOutputParser(pydantic_object=QAPairList)
-        prompt_path = os.path.join(os.getcwd(), "prompts", "qa_extraction", "v2.txt")
+        prompt_path = PROMPTS_DIR / "qa_extraction" / "v2.txt"
         with open(prompt_path, "r") as f:
             template_str = f.read()
         prompt = PromptTemplate(template=template_str, input_variables=["transcript", "criteria"], partial_variables={"format_instructions": parser.get_format_instructions()})
@@ -181,7 +216,7 @@ class LlamaClient:
     async def run_scoring(qa_pairs: list, criteria: list, jd_text: str, ai_mode: str = "normal") -> ScoringResult:
         model = get_llama_model()
         parser = PydanticOutputParser(pydantic_object=ScoringResult)
-        prompt_path = os.path.join(os.getcwd(), "prompts", "scoring", "v2.txt")
+        prompt_path = PROMPTS_DIR / "scoring" / "v2.txt"
         with open(prompt_path, "r") as f:
             template_str = f.read()
         prompt = PromptTemplate(template=template_str, input_variables=["qa_pairs", "criteria", "jd_text", "mode"], partial_variables={"format_instructions": parser.get_format_instructions()})
@@ -200,12 +235,31 @@ class LlamaClient:
     async def run_insight_generation(scoring: ScoringResult, qa_pairs: list, criteria: list, ai_mode: str = "normal") -> InsightReport:
         model = get_llama_model()
         parser = PydanticOutputParser(pydantic_object=InsightReport)
-        prompt_path = os.path.join(os.getcwd(), "prompts", "insight_generation", "v2.txt")
+        prompt_path = PROMPTS_DIR / "insight_generation" / "v2.txt"
         with open(prompt_path, "r") as f:
             template_str = f.read()
         prompt = PromptTemplate(template=template_str, input_variables=["scoring", "qa_pairs", "criteria", "mode"], partial_variables={"format_instructions": parser.get_format_instructions()})
         
         formatted_prompt = await prompt.ainvoke({"scoring": scoring.model_dump_json(), "qa_pairs": str(qa_pairs), "criteria": str(criteria), "mode": ai_mode})
+        response = await _rate_limited_ainvoke(model, formatted_prompt)
+        
+        tokens = extract_tokens(response)
+        tokens_tracker.set(tokens)
+        
+        result = parser.parse(response.content)
+        return result
+
+    @staticmethod
+    @retry(wait=wait_exponential(multiplier=1, min=5, max=15), stop=stop_after_attempt(3))
+    async def run_transcript_validation(transcript: str, jd_text: str) -> TranscriptValidationResult:
+        model = get_llama_model()
+        parser = PydanticOutputParser(pydantic_object=TranscriptValidationResult)
+        prompt_path = PROMPTS_DIR / "transcript_validation" / "v2.txt"
+        with open(prompt_path, "r") as f:
+            template_str = f.read()
+        prompt = PromptTemplate(template=template_str, input_variables=["transcript", "jd_text"], partial_variables={"format_instructions": parser.get_format_instructions()})
+        
+        formatted_prompt = await prompt.ainvoke({"transcript": transcript, "jd_text": jd_text})
         response = await _rate_limited_ainvoke(model, formatted_prompt)
         
         tokens = extract_tokens(response)

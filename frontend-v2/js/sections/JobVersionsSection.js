@@ -1,4 +1,3 @@
-import { t } from '../core/i18n.js';
 import { api } from '../core/api.js';
 import { Modal } from '../components/Modal.js';
 import { Toast } from '../components/Toast.js';
@@ -104,14 +103,28 @@ export class JobVersionsSection {
     }
 
     mount() {
-        document.getElementById('add-version-btn').addEventListener('click', () => {
-            this._openCreateForm();
-        });
+        const addVersionBtn = document.getElementById('add-version-btn');
+        if (addVersionBtn) {
+            // إزالة المستمع القديم قبل إضافة جديد
+            if (addVersionBtn._clickHandler) {
+                addVersionBtn.removeEventListener('click', addVersionBtn._clickHandler);
+            }
+            addVersionBtn._clickHandler = () => this._openCreateForm();
+            addVersionBtn.addEventListener('click', addVersionBtn._clickHandler);
+        }
 
-        document.getElementById('versions-container').addEventListener('click', (e) => {
-            const delBtn = e.target.closest('.delete-version-btn');
-            if (delBtn) this._deleteVersion(delBtn.dataset.id);
-        });
+        const versionsContainer = document.getElementById('versions-container');
+        if (versionsContainer) {
+            // إزالة المستمع القديم قبل إضافة جديد
+            if (versionsContainer._clickHandler) {
+                versionsContainer.removeEventListener('click', versionsContainer._clickHandler);
+            }
+            versionsContainer._clickHandler = (e) => {
+                const delBtn = e.target.closest('.delete-version-btn');
+                if (delBtn) this._deleteVersion(delBtn.dataset.id);
+            };
+            versionsContainer.addEventListener('click', versionsContainer._clickHandler);
+        }
     }
 
     _openCreateForm() {

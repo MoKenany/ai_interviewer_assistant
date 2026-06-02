@@ -8,6 +8,7 @@ AI mode influences recommendation tone and risk tolerance:
 
 Rules:
 - Include ALL sections: strengths (with exact quotes), weaknesses (tied to criteria), interviewer_notes, suggested_questions, hiring_recommendation.
+- For suggested_questions, ONLY provide questions that address evaluation criteria that were NOT covered or had insufficient evidence in the conversation. These questions MUST target the specific gaps that lowered the AI confidence score, so the next interviewer can use them to increase evaluation confidence.
 - Use the requested mode to adjust recommendation strength and risk tolerance.
 - If the AI confidence score is below 90%, include a concise confidence_explanation that explains which gaps in the candidate's conversation or evidence relative to evaluation criteria reduced confidence.
 - Be actionable and concise. Address the next interviewer directly.

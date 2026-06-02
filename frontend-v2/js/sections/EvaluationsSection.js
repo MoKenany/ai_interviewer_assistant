@@ -226,17 +226,26 @@ export class EvaluationsSection {
         // Refresh Button
         const refreshBtn = document.getElementById('refresh-evals-btn');
         if (refreshBtn) {
-            refreshBtn.addEventListener('click', async () => {
+            // إزالة المستمع القديم قبل إضافة جديد
+            if (refreshBtn._clickHandler) {
+                refreshBtn.removeEventListener('click', refreshBtn._clickHandler);
+            }
+            refreshBtn._clickHandler = async () => {
                 const icon = document.getElementById('refresh-icon');
                 if (icon) icon.classList.add('fa-spin');
                 await this.refresh();
-            });
+            };
+            refreshBtn.addEventListener('click', refreshBtn._clickHandler);
         }
 
         // View Session Button
         const tbody = document.getElementById('eval-tbody');
         if (tbody) {
-            tbody.addEventListener('click', (e) => {
+            // إزالة المستمع القديم قبل إضافة جديد
+            if (tbody._clickHandler) {
+                tbody.removeEventListener('click', tbody._clickHandler);
+            }
+            tbody._clickHandler = (e) => {
                 const viewBtn = e.target.closest('.view-session-btn');
                 if (viewBtn) {
                     const session = this.sessions.find(s => s.id == viewBtn.dataset.id);
@@ -244,7 +253,8 @@ export class EvaluationsSection {
                         this.showSessionDetails(session);
                     }
                 }
-            });
+            };
+            tbody.addEventListener('click', tbody._clickHandler);
         }
     }
 
