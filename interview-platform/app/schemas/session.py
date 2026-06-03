@@ -20,7 +20,6 @@ class SessionResponse(BaseModel):
     pipeline_status: PipelineStatusEnum
     full_transcript: Optional[str] = None
     auto_delete_media: bool = False
-    enable_transcript_validation: bool = False
     created_at: datetime
     updated_at: Optional[datetime]
 

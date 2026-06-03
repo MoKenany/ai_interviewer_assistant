@@ -81,10 +81,14 @@ export const api = {
 
         console.log(`[API] ${fetchOptions.method || 'GET'} ${endpoint}`, bodyToLog);
 
+        const method = fetchOptions.method || 'GET';
+        const cacheOption = (method === 'GET' && !cache) ? { cache: 'no-store' } : {};
+
         try {
             const response = await fetch(`${API_BASE}${endpoint}`, {
                 ...fetchOptions,
-                headers
+                headers,
+                ...cacheOption
             });
 
             const contentType = response.headers.get('content-type') || '';

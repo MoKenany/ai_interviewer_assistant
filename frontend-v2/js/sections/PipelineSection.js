@@ -64,7 +64,6 @@ export class PipelineSection {
         const stepOrder = {
             'audio_extract': 1,
             'stt': 2,
-            'transcript_validation': 2.5,
             'qa_extraction': 3,
             'scoring': 4,
             'insight_generation': 5
@@ -101,7 +100,6 @@ export class PipelineSection {
                 const friendlyNames = {
                     audio_extract: '1. Audio Extraction (استخراج الصوت)',
                     stt: '2. Speech to Text (تحويل الصوت إلى نص)',
-                    transcript_validation: '2.5. Transcript Validation (التحقق من توافق المقابلة)',
                     qa_extraction: '3. Q&A Extraction (استخراج الأسئلة والأجوبة)',
                     scoring: '4. Scoring & Assessment (التقييم والدرجات)',
                     insight_generation: '5. Executive Summary & Recommendations (ملخص الأداء والتقارير)'

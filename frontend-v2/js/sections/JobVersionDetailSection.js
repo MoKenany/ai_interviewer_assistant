@@ -561,8 +561,17 @@ ${v.raw_jd_text || `<em style="color:var(--text-muted);">${isAr ? 'لا يوجد
                     this.version.raw_jd_text = jdText;
                     this.version.criteria_mode = mode;
 
+                    // تحديث الـ DOM مباشرة بدون refresh
+                    const jdDisplay = document.getElementById('jd-display');
+                    if (jdDisplay) {
+                        if (jdText && jdText.trim()) {
+                            jdDisplay.textContent = jdText;
+                        } else {
+                            jdDisplay.innerHTML = `<em style="color:var(--text-muted);">${isAr ? 'لا يوجد وصف وظيفي مضاف بعد.' : 'No job description added yet.'}</em>`;
+                        }
+                    }
+
                     Toast.show(isAr ? 'تم حفظ الوصف الوظيفي بنجاح!' : 'Job description updated successfully!', 'success');
-                    // لا نحتاج refresh() - التحديث محلي
                 } catch (e) {
                     Toast.show(e.message || (isAr ? 'خطأ أثناء التحديث' : 'Error updating JD'), 'error');
                     throw e;

@@ -18,10 +18,6 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# Request schema for validation preference
-class ValidationPreferenceUpdate(BaseModel):
-    enable: bool
-
 router = APIRouter(prefix="/sessions", tags=["sessions"], dependencies=[Depends(get_current_user)])
 
 @router.post("", response_model=SessionResponse)
@@ -40,47 +36,6 @@ async def get_session(session_id: int, db: AsyncSession = Depends(get_db)):
 async def delete_session(session_id: int, db: AsyncSession = Depends(get_db)):
     await SessionService.delete_session(db, session_id)
     return {"message": "Session and associated media deleted"}
-
-@router.patch("/{session_id}/validation-preference")
-async def set_transcript_validation(
-    session_id: int,
-    preference: ValidationPreferenceUpdate,
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    Set transcript validation preference for a session.
-    
-    This is an optional quality gate step that validates if the transcript
-    is compatible with the job description. It adds token cost but ensures
-    data quality. Can be toggled before pipeline starts.
-    
-    - **enable**: true to validate, false to skip (saves tokens)
-    """
-    logger.info(f"[API] Setting validation preference for session {session_id}: enable={preference.enable}")
-    
-    session = await db.get(InterviewSession, session_id)
-    if not session:
-        logger.warning(f"[API] Session {session_id} not found")
-        raise HTTPException(status_code=404, detail="Session not found")
-    
-    if session.pipeline_status == PipelineStatusEnum.running:
-        logger.warning(f"[API] Cannot change validation preference for session {session_id} - pipeline is running")
-        raise HTTPException(
-            status_code=409,
-            detail="Cannot change validation preference while pipeline is running"
-        )
-    
-    session.enable_transcript_validation = preference.enable
-    await db.commit()
-    await db.refresh(session)
-    
-    logger.info(f"[API] Successfully set validation preference for session {session_id}: enable={session.enable_transcript_validation}")
-    
-    return {
-        "session_id": session_id,
-        "enable_transcript_validation": session.enable_transcript_validation,
-        "message": f"Transcript validation {'enabled' if session.enable_transcript_validation else 'disabled'}"
-    }
 
 @router.post("/{session_id}/upload", response_model=SessionUploadResponse)
 async def upload_media(
@@ -123,9 +78,7 @@ async def upload_media(
     # Upload media using existing service, persist the auto_delete preference
     session_response = await SessionService.upload_media(db, session_id, file, auto_delete=auto_delete_media)
     
-    # ✅ Refresh session to ensure we have the latest validation preference
-    await db.refresh(session)
-    logger.info(f"[API] Before queueing pipeline task - session {session_id} enable_transcript_validation={session.enable_transcript_validation}")
+    logger.info(f"[API] Before queueing pipeline task - session {session_id}")
     
     # ✅ Register pipeline run BEFORE queueing task (sync frontend state)
     from app.models.ai_pipeline_run import AIPipelineRun, PipelineRunStatusEnum as RunStatus
@@ -187,9 +140,7 @@ async def upload_media_from_url(
     # Download and register media
     await SessionService.upload_media_from_url(db, session_id, url, auto_delete=auto_delete_media)
 
-    # ✅ Refresh session to ensure we have the latest validation preference
-    await db.refresh(session)
-    logger.info(f"[API] Before queueing pipeline task - session {session_id} enable_transcript_validation={session.enable_transcript_validation}")
+    logger.info(f"[API] Before queueing pipeline task - session {session_id}")
 
     # Queue pipeline task
     try:

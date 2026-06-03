@@ -70,37 +70,6 @@ class InsightReport(BaseModel):
     suggested_questions: List[SuggestedQuestion]
 
 
-class JobMatchDetail(BaseModel):
-    jd_job_title: str
-    transcript_job_title_inferred: str
-    titles_match: bool
-    match_explanation: str
-
-class TopicAnalysis(BaseModel):
-    jd_key_topics: List[str]
-    transcript_topics: List[str]
-    overlap_percentage: int
-    missing_topics: List[str]
-    extra_topics: List[str]
-
-class LanguageAnalysis(BaseModel):
-    jd_language: str
-    transcript_language: str
-    language_match: bool
-    is_translated: bool
-    translation_notes: Optional[str] = None
-
-class TranscriptValidationResult(BaseModel):
-    is_compatible: bool
-    compatibility_score: int = Field(ge=0, le=100)
-    job_match: JobMatchDetail
-    topic_analysis: TopicAnalysis
-    language_analysis: LanguageAnalysis
-    critical_issues: List[str]
-    assessment_notes: str
-    recommendation: str  # "proceed" | "review_manually" | "reject"
-    reasoning: str
-
 
 
 # Context variables to track tokens
@@ -241,25 +210,6 @@ class LlamaClient:
         prompt = PromptTemplate(template=template_str, input_variables=["scoring", "qa_pairs", "criteria", "mode"], partial_variables={"format_instructions": parser.get_format_instructions()})
         
         formatted_prompt = await prompt.ainvoke({"scoring": scoring.model_dump_json(), "qa_pairs": str(qa_pairs), "criteria": str(criteria), "mode": ai_mode})
-        response = await _rate_limited_ainvoke(model, formatted_prompt)
-        
-        tokens = extract_tokens(response)
-        tokens_tracker.set(tokens)
-        
-        result = parser.parse(response.content)
-        return result
-
-    @staticmethod
-    @retry(wait=wait_exponential(multiplier=1, min=5, max=15), stop=stop_after_attempt(3))
-    async def run_transcript_validation(transcript: str, jd_text: str) -> TranscriptValidationResult:
-        model = get_llama_model()
-        parser = PydanticOutputParser(pydantic_object=TranscriptValidationResult)
-        prompt_path = PROMPTS_DIR / "transcript_validation" / "v2.txt"
-        with open(prompt_path, "r") as f:
-            template_str = f.read()
-        prompt = PromptTemplate(template=template_str, input_variables=["transcript", "jd_text"], partial_variables={"format_instructions": parser.get_format_instructions()})
-        
-        formatted_prompt = await prompt.ainvoke({"transcript": transcript, "jd_text": jd_text})
         response = await _rate_limited_ainvoke(model, formatted_prompt)
         
         tokens = extract_tokens(response)

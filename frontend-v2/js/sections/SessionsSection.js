@@ -488,23 +488,7 @@ export class SessionsSection {
                     </small>
                 </div>
 
-                <div style="margin-top: 1.5rem; background:var(--bg-secondary); padding:1rem; border-radius:8px;">
-                    <label style="display: flex; align-items: center; gap: 1rem; cursor: pointer; user-select: none; text-align: ${isAr ? 'right' : 'left'}; margin:0;">
-                        <div class="custom-toggle">
-                            <input type="checkbox" id="upload-validation" checked>
-                            <span class="toggle-slider"></span>
-                            <span class="toggle-knob"></span>
-                        </div>
-                        <div>
-                            <span style="font-size: 0.9rem; font-weight: 700; color: var(--text-color); display: block;">
-                                ${isAr ? 'التحقق من توافق المقابلة مع الوصف الوظيفي' : 'Validate Transcript Compatibility'}
-                            </span>
-                            <span style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.2rem;">
-                                ${isAr ? 'التحقق من أن النص المفرغ متطابق مع الوصف الوظيفي (اختياري - قد يزيد وقت المعالجة).' : 'Check if transcript matches job description (optional - costs extra tokens).'}
-                            </span>
-                        </div>
-                    </label>
-                </div>
+
             </div>
 
             <div id="tab-record" class="tab-content" style="display:none; text-align:center;">
@@ -553,23 +537,7 @@ export class SessionsSection {
                     </label>
                 </div>
 
-                <div style="margin-top: 1.5rem; background:var(--bg-secondary); padding:1rem; border-radius:8px;">
-                    <label style="display: flex; align-items: center; gap: 1rem; cursor: pointer; user-select: none; text-align: ${isAr ? 'right' : 'left'}; margin:0;">
-                        <div class="custom-toggle">
-                            <input type="checkbox" id="record-validation" checked>
-                            <span class="toggle-slider"></span>
-                            <span class="toggle-knob"></span>
-                        </div>
-                        <div>
-                            <span style="font-size: 0.9rem; font-weight: 700; color: var(--text-color); display: block;">
-                                ${isAr ? 'التحقق من توافق المقابلة مع الوصف الوظيفي' : 'Validate Transcript Compatibility'}
-                            </span>
-                            <span style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.2rem;">
-                                ${isAr ? 'التحقق من أن النص المفرغ متطابق مع الوصف الوظيفي (اختياري - قد يزيد وقت المعالجة).' : 'Check if transcript matches job description (optional - costs extra tokens).'}
-                            </span>
-                        </div>
-                    </label>
-                </div>
+
             </div>
 
             <div id="tab-link" class="tab-content" style="display:none;">
@@ -605,23 +573,7 @@ export class SessionsSection {
                     </label>
                 </div>
 
-                <div style="margin-top: 1.5rem; background:var(--bg-secondary); padding:1rem; border-radius:8px;">
-                    <label style="display: flex; align-items: center; gap: 1rem; cursor: pointer; user-select: none; text-align: ${isAr ? 'right' : 'left'}; margin:0;">
-                        <div class="custom-toggle">
-                            <input type="checkbox" id="link-validation" checked>
-                            <span class="toggle-slider"></span>
-                            <span class="toggle-knob"></span>
-                        </div>
-                        <div>
-                            <span style="font-size: 0.9rem; font-weight: 700; color: var(--text-color); display: block;">
-                                ${isAr ? 'التحقق من توافق المقابلة مع الوصف الوظيفي' : 'Validate Transcript Compatibility'}
-                            </span>
-                            <span style="font-size: 0.8rem; color: var(--text-muted); display: block; margin-top: 0.2rem;">
-                                ${isAr ? 'التحقق من أن النص المفرغ متطابق مع الوصف الوظيفي (اختياري - قد يزيد وقت المعالجة).' : 'Check if transcript matches job description (optional - costs extra tokens).'}
-                            </span>
-                        </div>
-                    </label>
-                </div>
+
             </div>
         `;
 
@@ -670,36 +622,20 @@ export class SessionsSection {
 
                 try {
                     let autoDelete = false;
-                    let enableValidation = false;
 
                     if (activeTab === 'upload') {
                         autoDelete = true;
-                        enableValidation = modalEl.querySelector('#upload-validation')?.checked ?? true;
                         Toast.show(isAr ? 'جاري الرفع...' : 'Uploading...', 'info');
-                        // Set validation preference first
-                        console.log(`[SessionsSection] Setting validation preference for session ${id}: ${enableValidation}`);
-                        const prefResult = await api.patch(`/sessions/${id}/validation-preference`, { enable: enableValidation });
-                        console.log(`[SessionsSection] Validation preference set:`, prefResult);
                         await api.post(`/sessions/${id}/upload?auto_delete_media=${autoDelete}`, formData);
                     } else if (activeTab === 'record') {
                         autoDelete = modalEl.querySelector('#record-auto-delete')?.checked ?? false;
-                        enableValidation = modalEl.querySelector('#record-validation')?.checked ?? true;
                         Toast.show(isAr ? 'جاري رفع التسجيل الحي...' : 'Uploading recording...', 'info');
-                        // Set validation preference first
-                        console.log(`[SessionsSection] Setting validation preference for session ${id}: ${enableValidation}`);
-                        const prefResult = await api.patch(`/sessions/${id}/validation-preference`, { enable: enableValidation });
-                        console.log(`[SessionsSection] Validation preference set:`, prefResult);
                         await api.post(`/sessions/${id}/upload?auto_delete_media=${autoDelete}`, formData);
                     } else if (activeTab === 'link') {
                         autoDelete = modalEl.querySelector('#link-auto-delete')?.checked ?? false;
-                        enableValidation = modalEl.querySelector('#link-validation')?.checked ?? true;
                         const urlInput = modalEl.querySelector('#media-url');
                         const urlVal = urlInput.value.trim();
                         Toast.show(isAr ? 'جاري التحميل من الرابط...' : 'Downloading from URL...', 'info');
-                        // Set validation preference first
-                        console.log(`[SessionsSection] Setting validation preference for session ${id}: ${enableValidation}`);
-                        const prefResult = await api.patch(`/sessions/${id}/validation-preference`, { enable: enableValidation });
-                        console.log(`[SessionsSection] Validation preference set:`, prefResult);
                         await api.post(`/sessions/${id}/upload-url?url=${encodeURIComponent(urlVal)}&auto_delete_media=${autoDelete}`, {});
                     }
 

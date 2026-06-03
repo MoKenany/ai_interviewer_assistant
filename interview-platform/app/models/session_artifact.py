@@ -8,7 +8,6 @@ class ArtifactTypeEnum(str, enum.Enum):
     qa_pairs = "qa_pairs"
     evidence_quotes = "evidence_quotes"
     competency_map = "competency_map"
-    validation_result = "validation_result"
 
 class SessionArtifact(Base):
     __tablename__ = "session_artifacts"

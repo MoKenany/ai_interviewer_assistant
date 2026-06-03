@@ -7,7 +7,6 @@ from app.database import Base
 class StepNameEnum(str, enum.Enum):
     audio_extract = "audio_extract"
     stt = "stt"
-    transcript_validation = "transcript_validation"
     qa_extraction = "qa_extraction"
     scoring = "scoring"
     insight_generation = "insight_generation"

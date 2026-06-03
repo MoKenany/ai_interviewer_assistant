@@ -109,6 +109,4 @@ _deprecated/
 deprecated/
 archive/
 .archive/
-
-
-!/.env.example
+!.env.example
