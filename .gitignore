@@ -56,6 +56,8 @@ data/
 db.sqlite3
 *.rdb
 dump.rdb
+redis/*.conf
+interview-platform/redis/*.conf
 
 # --- Executables & Binaries ---
 *.exe
