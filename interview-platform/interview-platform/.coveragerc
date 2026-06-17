@@ -1,9 +1,0 @@
-[run]
-source = app
-omit =
-    tests/*
-    alembic/*
-
-[report]
-show_missing = True
-fail_under = 80

@@ -22,10 +22,12 @@ Design rationale:
 import sys
 import os
 import subprocess
+import socket
+import time
 
 
 def start_celery():
-    print("Starting Celery worker (single-process, safe for free-tier Gemini quota)...")
+    print("Starting Celery worker ...")
     print("  Concurrency : 1  (in-process rate limiter is effective)")
     print("  Pool        : solo  (no subprocess overhead)")
     print("  Queue       : default")
@@ -43,10 +45,35 @@ def start_celery():
     ])
 
 
+def is_redis_available(host="127.0.0.1", port=6379, timeout=1):
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def wait_for_redis(host="127.0.0.1", port=6379, timeout_seconds=30):
+    print(f"Checking Redis availability at redis://{host}:{port}...")
+    end_time = time.time() + timeout_seconds
+    while time.time() < end_time:
+        if is_redis_available(host, port):
+            print("[OK] Redis is available.")
+            return True
+        time.sleep(0.5)
+    return False
+
+
 if __name__ == "__main__":
     # Ensure the working directory is the project root (where app/ lives)
     script_dir = os.path.dirname(os.path.abspath(__file__))
     os.chdir(script_dir)
+
+    if not wait_for_redis():
+        print("[ERROR] Redis is not available on redis://localhost:6379.")
+        print("Start Redis first or use `python run.py` to launch Redis + Celery together.")
+        sys.exit(1)
+
     try:
         start_celery()
     except KeyboardInterrupt:

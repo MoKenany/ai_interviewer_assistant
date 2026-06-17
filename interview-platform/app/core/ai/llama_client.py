@@ -6,14 +6,17 @@ from langchain_groq import ChatGroq
 from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import PydanticOutputParser
 from typing import List, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, computed_field
 import contextvars
 
 from app.schemas.job import EvaluationCriteriaProposal
 from app.models.interview_evaluation import HiringRecommendationEnum
 from app.core.config import GROQ_API_KEY
-
-PROMPTS_DIR = Path(__file__).resolve().parents[3] / "prompts"
+from app.core.prompts.sanitizer import sanitize_input
+from app.core.prompts.jd_extraction_prompt import build_jd_extraction_prompt
+from app.core.prompts.qa_extraction_prompt import build_qa_extraction_prompt
+from app.core.prompts.scoring_prompt import build_scoring_prompt
+from app.core.prompts.insight_generation_prompt import build_insight_generation_prompt
 
 # Pydantic Models for Parsing
 class CriteriaList(BaseModel):
@@ -31,12 +34,21 @@ class QAPairList(BaseModel):
 class CriterionScore(BaseModel):
     criterion_name: str
     score: int = Field(ge=0, le=100)
+    weight: float
     justification: str
     evidence_quote: str
 
 class ScoringResult(BaseModel):
     per_criterion_scores: List[CriterionScore]
-    overall_weighted_score: float
+
+    @computed_field
+    @property
+    def overall_weighted_score(self) -> float:
+        total_weight = sum(c.weight for c in self.per_criterion_scores)
+        if total_weight == 0:
+            return 0.0
+        weighted_sum = sum(c.score * c.weight for c in self.per_criterion_scores)
+        return round(weighted_sum / total_weight, 2)
 
 class InsightStrength(BaseModel):
     criterion: str
@@ -141,79 +153,80 @@ async def _rate_limited_ainvoke(model, formatted_prompt) -> any:
         
     return await model.ainvoke(formatted_prompt)
 
+def clean_json_response(text: str) -> str:
+    """Strips markdown json wrappers if the model ignores the no-markdown instruction."""
+    text = text.strip()
+    if text.startswith("```json"):
+        text = text[7:]
+    elif text.startswith("```"):
+        text = text[3:]
+    
+    if text.endswith("```"):
+        text = text[:-3]
+        
+    return text.strip()
+
 class LlamaClient:
     @staticmethod
     @retry(wait=wait_exponential(multiplier=1, min=5, max=15), stop=stop_after_attempt(3))
-    async def run_jd_agent(jd_text: str) -> List[EvaluationCriteriaProposal]:
+    async def run_jd_agent(jd_text: str, job_title: str = "Unknown", department: str = "Unknown", employment_type: str = "Unknown", min_criteria: int = 4, max_criteria: int = 8) -> List[EvaluationCriteriaProposal]:
         model = get_llama_model()
         parser = PydanticOutputParser(pydantic_object=CriteriaList)
-        prompt_path = PROMPTS_DIR / "jd_extraction" / "v2.txt"
-        with open(prompt_path, "r") as f:
-            template_str = f.read()
-        prompt = PromptTemplate(template=template_str, input_variables=["jd_text"], partial_variables={"format_instructions": parser.get_format_instructions()})
+        prompt = build_jd_extraction_prompt(parser, job_title, department, employment_type, min_criteria, max_criteria)
         
-        formatted_prompt = await prompt.ainvoke({"jd_text": jd_text})
+        formatted_prompt = await prompt.ainvoke({"jd_text": sanitize_input(jd_text)})
         response = await _rate_limited_ainvoke(model, formatted_prompt)
         
         tokens = extract_tokens(response)
         tokens_tracker.set(tokens)
         
-        result = parser.parse(response.content)
+        result = parser.parse(clean_json_response(response.content))
         return result.criteria
 
     @staticmethod
     @retry(wait=wait_exponential(multiplier=1, min=5, max=15), stop=stop_after_attempt(3))
-    async def run_qa_extraction(transcript: str, criteria: list) -> List[QAPair]:
+    async def run_qa_extraction(transcript: str, criteria: list, session_type: str = "general") -> List[QAPair]:
         model = get_llama_model()
         parser = PydanticOutputParser(pydantic_object=QAPairList)
-        prompt_path = PROMPTS_DIR / "qa_extraction" / "v2.txt"
-        with open(prompt_path, "r") as f:
-            template_str = f.read()
-        prompt = PromptTemplate(template=template_str, input_variables=["transcript", "criteria"], partial_variables={"format_instructions": parser.get_format_instructions()})
+        prompt = build_qa_extraction_prompt(parser, session_type)
         
-        formatted_prompt = await prompt.ainvoke({"transcript": transcript, "criteria": str(criteria)})
+        formatted_prompt = await prompt.ainvoke({"transcript": sanitize_input(transcript), "criteria": str(criteria)})
         response = await _rate_limited_ainvoke(model, formatted_prompt)
         
         tokens = extract_tokens(response)
         tokens_tracker.set(tokens)
         
-        result = parser.parse(response.content)
+        result = parser.parse(clean_json_response(response.content))
         return result.qa_pairs
 
     @staticmethod
     @retry(wait=wait_exponential(multiplier=1, min=5, max=15), stop=stop_after_attempt(3))
-    async def run_scoring(qa_pairs: list, criteria: list, jd_text: str, ai_mode: str = "normal") -> ScoringResult:
+    async def run_scoring(qa_pairs: list, criteria: list, jd_text: str, ai_mode: str = "normal", job_title: str = "Unknown", session_type: str = "general") -> ScoringResult:
         model = get_llama_model()
         parser = PydanticOutputParser(pydantic_object=ScoringResult)
-        prompt_path = PROMPTS_DIR / "scoring" / "v2.txt"
-        with open(prompt_path, "r") as f:
-            template_str = f.read()
-        prompt = PromptTemplate(template=template_str, input_variables=["qa_pairs", "criteria", "jd_text", "mode"], partial_variables={"format_instructions": parser.get_format_instructions()})
+        prompt = build_scoring_prompt(parser, ai_mode, job_title, session_type)
         
-        formatted_prompt = await prompt.ainvoke({"qa_pairs": str(qa_pairs), "criteria": str(criteria), "jd_text": jd_text, "mode": ai_mode})
+        formatted_prompt = await prompt.ainvoke({"qa_pairs": str(qa_pairs), "criteria": str(criteria), "jd_text": sanitize_input(jd_text)})
         response = await _rate_limited_ainvoke(model, formatted_prompt)
         
         tokens = extract_tokens(response)
         tokens_tracker.set(tokens)
         
-        result = parser.parse(response.content)
+        result = parser.parse(clean_json_response(response.content))
         return result
 
     @staticmethod
     @retry(wait=wait_exponential(multiplier=1, min=5, max=15), stop=stop_after_attempt(3))
-    async def run_insight_generation(scoring: ScoringResult, qa_pairs: list, criteria: list, ai_mode: str = "normal") -> InsightReport:
+    async def run_insight_generation(scoring: ScoringResult, qa_pairs: list, criteria: list, ai_mode: str = "normal", job_title: str = "Unknown", department: str = "Unknown", session_type: str = "general") -> InsightReport:
         model = get_llama_model()
         parser = PydanticOutputParser(pydantic_object=InsightReport)
-        prompt_path = PROMPTS_DIR / "insight_generation" / "v2.txt"
-        with open(prompt_path, "r") as f:
-            template_str = f.read()
-        prompt = PromptTemplate(template=template_str, input_variables=["scoring", "qa_pairs", "criteria", "mode"], partial_variables={"format_instructions": parser.get_format_instructions()})
+        prompt = build_insight_generation_prompt(parser, ai_mode, job_title, department, session_type)
         
-        formatted_prompt = await prompt.ainvoke({"scoring": scoring.model_dump_json(), "qa_pairs": str(qa_pairs), "criteria": str(criteria), "mode": ai_mode})
+        formatted_prompt = await prompt.ainvoke({"scoring": scoring.model_dump_json(), "qa_pairs": str(qa_pairs), "criteria": str(criteria)})
         response = await _rate_limited_ainvoke(model, formatted_prompt)
         
         tokens = extract_tokens(response)
         tokens_tracker.set(tokens)
         
-        result = parser.parse(response.content)
+        result = parser.parse(clean_json_response(response.content))
         return result

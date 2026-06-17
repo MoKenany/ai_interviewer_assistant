@@ -54,6 +54,8 @@ share/
 *.local
 data/
 db.sqlite3
+*.rdb
+dump.rdb
 
 # --- Executables & Binaries ---
 *.exe
@@ -65,6 +67,9 @@ ffprobe
 
 # --- Media Uploads & Temp Files ---
 # Ignore locally uploaded resumes and audio recordings to keep repository clean
+interview-platform/prompts/
+storage/
+interview-platform/storage/
 app/uploads/
 app/audio_uploads/
 interview-platform/app/uploads/

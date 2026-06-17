@@ -207,7 +207,12 @@ class JobVersionService:
         if version_in.criteria_mode in ["ai", "hybrid"] and version_in.raw_jd_text:
             try:
                 print(f"DEBUG: Triggering AI extraction for job {job_id}")
-                ai_proposals = await LlamaClient.run_jd_agent(version_in.raw_jd_text)
+                ai_proposals = await LlamaClient.run_jd_agent(
+                    version_in.raw_jd_text,
+                    job_title=job.title or "Unknown",
+                    department=job.department or "Unknown",
+                    employment_type=job.employment_type or "Unknown"
+                )
                 print(f"DEBUG: AI returned {len(ai_proposals)} proposals")
             except Exception as e:
                 root_error = unwrap_ai_error(e)
@@ -287,8 +292,14 @@ class CriteriaService:
         
         async with lock:
             try:
+                job = await JobService.get_job(db, job_id)
                 print(f"DEBUG: Triggering AI criteria extraction for version {version_id}")
-                ai_proposals = await LlamaClient.run_jd_agent(version.raw_jd_text)
+                ai_proposals = await LlamaClient.run_jd_agent(
+                    version.raw_jd_text,
+                    job_title=job.title or "Unknown",
+                    department=job.department or "Unknown",
+                    employment_type=job.employment_type or "Unknown"
+                )
                 print(f"DEBUG: AI returned {len(ai_proposals)} proposals")
             except Exception as e:
                 root_error = unwrap_ai_error(e)

@@ -11,6 +11,7 @@ import os
 import subprocess
 import socket
 import time
+import shutil
 import uvicorn
 import signal
 
@@ -36,6 +37,35 @@ def cleanup_and_exit_tree():
 
 def signal_handler(sig, frame):
     cleanup_and_exit_tree()
+
+
+def find_redis_executable():
+    """Find redis-server executable locally or on the system PATH."""
+    local_path = os.path.join("redis", "redis-server.exe")
+    if os.path.exists(local_path):
+        return local_path
+
+    # Fallback: use system-installed Redis if available
+    system_redis = shutil.which("redis-server.exe") or shutil.which("redis-server")
+    if system_redis:
+        return system_redis
+    
+    # If not found anywhere, attempt automatic setup
+    print("[INFO] Redis not found. Attempting automatic setup...")
+    try:
+        result = subprocess.run([sys.executable, "setup_redis.py"], capture_output=True, text=True, timeout=180)
+        print(result.stdout)  # Print setup script output
+        if result.stderr:
+            print(result.stderr)
+        if result.returncode == 0 and os.path.exists(local_path):
+            print("[OK] Redis setup completed automatically.")
+            return local_path
+    except subprocess.TimeoutExpired:
+        print("[WARN] Auto-setup timeout exceeded.")
+    except Exception as e:
+        print(f"[WARN] Auto-setup failed: {e}")
+    
+    return None
 
 # Register standard terminate/interrupt signals
 signal.signal(signal.SIGINT, signal_handler)
@@ -65,9 +95,9 @@ def start_services():
         print("[OK] Redis is already running on port 6379 (Docker/Service). Skipping launch.")
     else:
         print("[START] Starting local Native Windows Redis Server in a separate window...")
-        redis_exe = os.path.join("redis", "redis-server.exe")
-        redis_conf = os.path.join("redis", "redis.windows.conf")
-        if os.path.exists(redis_exe):
+        redis_exe = find_redis_executable()
+        if redis_exe:
+            redis_conf = os.path.join("redis", "redis.windows.conf")
             try:
                 # Start Redis in a separate console window for stability and visibility
                 p = subprocess.Popen(
@@ -78,7 +108,7 @@ def start_services():
                 
                 # Wait for Redis to bind
                 redis_started = False
-                for _ in range(10):
+                for _ in range(30):
                     if is_redis_running():
                         print("[OK] Native Redis Server started successfully!")
                         redis_started = True
@@ -86,11 +116,19 @@ def start_services():
                     time.sleep(0.5)
                 
                 if not redis_started:
-                    print("[WARN] Redis started but port 6379 is not responding yet. Checking logs in the opened terminal.")
+                    print("[ERROR] Redis did not start on port 6379 within 15 seconds.")
+                    print("Please check the Redis console window and restart the launcher when Redis is ready.")
+                    return
             except Exception as e:
-                print(f"[ERROR] Failed to start local Redis: {e}")
+                print(f"[ERROR] Failed to start Redis: {e}")
+                return
         else:
-            print("[WARN] Local Redis executable not found. Please ensure Redis is running manually.")
+            print("[ERROR] Redis executable not found and auto-setup failed.")
+            print("Options:")
+            print("  1. Run: python setup_redis.py")
+            print("  2. Or install Redis manually from: https://github.com/tporadowski/redis/releases")
+            print("  3. Then place redis-server.exe in: interview-platform/redis/")
+            return
 
     # 2. Start Celery Worker
     print("[START] Starting Celery Worker (concurrency=1) in background...")

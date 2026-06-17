@@ -25,6 +25,7 @@ from app.database import AsyncSessionLocal
 from app.models.interview_session import InterviewSession, PipelineStatusEnum
 from app.models.job_application import JobApplication
 from app.models.job_version import JobVersion
+from app.models.job import Job
 from app.models.media_file import MediaFile
 from app.models.ai_pipeline_run import AIPipelineRun, PipelineRunStatusEnum
 from app.models.ai_pipeline_step import AIPipelineStep, StepNameEnum, StepStatusEnum
@@ -236,6 +237,10 @@ async def _run_interview_pipeline_async(session_id: int) -> dict:
                         "Please add criteria before running the pipeline."
                     )
                 
+                job = await db.get(Job, job_version.job_id)
+                if not job:
+                    raise JobVersionNotFound(f"Job {job_version.job_id} not found")
+                
                 # Check if transcript already exists from a previous successful attempt
                 transcript = session.full_transcript or ""
                 
@@ -272,21 +277,21 @@ async def _run_interview_pipeline_async(session_id: int) -> dict:
                 current_step = steps_dict[StepNameEnum.qa_extraction]
                 qa_pairs = await _step_qa_extraction(
                     db, session, transcript, criteria_list, steps_dict,
-                    session_id, budget
+                    session_id, budget, job
                 )
                 
                 # ========== STEP 4: Scoring ==========
                 current_step = steps_dict[StepNameEnum.scoring]
                 scoring_res = await _step_scoring(
                     db, session, qa_pairs, criteria_list, job_version,
-                    steps_dict, session_id, budget
+                    steps_dict, session_id, budget, job
                 )
                 
                 # ========== STEP 5: Insight Generation ==========
                 current_step = steps_dict[StepNameEnum.insight_generation]
                 insight_res = await _step_insight_generation(
                     db, session, scoring_res, qa_pairs, criteria_list,
-                    steps_dict, session_id, budget
+                    steps_dict, session_id, budget, job
                 )
                 
                 # ========== Save Evaluation ==========
@@ -462,7 +467,7 @@ async def _step_stt(db, session, media, audio_path, steps_dict, session_id) -> s
 
 async def _step_qa_extraction(
     db, session, transcript, criteria_list, steps_dict,
-    session_id, budget
+    session_id, budget, job
 ) -> list:
     """Step 3: Extract QA pairs from transcript"""
     step = steps_dict[StepNameEnum.qa_extraction]
@@ -485,7 +490,7 @@ async def _step_qa_extraction(
         
         # Extract QA pairs with timeout
         qa_pairs = await asyncio.wait_for(
-            LlamaClient.run_qa_extraction(transcript, criteria_list),
+            LlamaClient.run_qa_extraction(transcript, criteria_list, session_type=session.session_type.value),
             timeout=AI_REQUEST_TIMEOUT
         )
         actual_tokens = tokens_tracker.get() or estimated
@@ -537,7 +542,7 @@ async def _step_qa_extraction(
 
 async def _step_scoring(
     db, session, qa_pairs, criteria_list, job_version,
-    steps_dict, session_id, budget
+    steps_dict, session_id, budget, job
 ) -> object:
     """Step 4: Score answers against criteria"""
     step = steps_dict[StepNameEnum.scoring]
@@ -564,12 +569,15 @@ async def _step_scoring(
                 qa_pairs,
                 criteria_list,
                 job_version.raw_jd_text,
-                ai_mode=session.ai_mode.value if session.ai_mode else "normal"
+                ai_mode=session.ai_mode.value if session.ai_mode else "normal",
+                job_title=job.title or "Unknown",
+                session_type=session.session_type.value
             ),
             timeout=AI_REQUEST_TIMEOUT
         )
         actual_tokens = tokens_tracker.get() or estimated
         
+
         # Store artifacts
         scoring_data = scoring_res.model_dump(mode='json')
         db.add(SessionArtifact(
@@ -614,7 +622,7 @@ async def _step_scoring(
 
 async def _step_insight_generation(
     db, session, scoring_res, qa_pairs, criteria_list,
-    steps_dict, session_id, budget
+    steps_dict, session_id, budget, job
 ) -> object:
     """Step 5: Generate insights and hiring recommendation"""
     step = steps_dict[StepNameEnum.insight_generation]
@@ -641,7 +649,10 @@ async def _step_insight_generation(
                 scoring_res,
                 qa_pairs,
                 criteria_list,
-                ai_mode=session.ai_mode.value if session.ai_mode else "normal"
+                ai_mode=session.ai_mode.value if session.ai_mode else "normal",
+                job_title=job.title or "Unknown",
+                department=job.department or "Unknown",
+                session_type=session.session_type.value
             ),
             timeout=AI_REQUEST_TIMEOUT
         )
